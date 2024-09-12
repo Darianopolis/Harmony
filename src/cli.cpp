@@ -7,10 +7,10 @@ int main()
 {
     cfg::Step step{
         .sources = {{
-            .root = "src",
+            .root = "test",
         }},
         .output = {{
-            .output = "out/harmony",
+            .output = "out/test",
         }},
     };
 
