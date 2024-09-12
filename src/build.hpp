@@ -2,7 +2,7 @@
 
 #include <core.hpp>
 #include <configuration.hpp>
-#include <definitions.hpp>
+#include <build-defs.hpp>
 
 #include <backend/backend.hpp>
 

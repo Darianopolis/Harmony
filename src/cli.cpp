@@ -10,7 +10,7 @@ int main()
             .root = "test",
         }},
         .output = {{
-            .output = "out/test",
+            .output = "test",
         }},
     };
 
