@@ -1,5 +1,7 @@
 #pragma once
 
+#if 0
+
 #include <core.hpp>
 
 #include <vector>
@@ -56,3 +58,5 @@ namespace json {
         operator bool() const noexcept;
     };
 }
+
+#endif

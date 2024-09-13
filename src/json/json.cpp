@@ -1,3 +1,5 @@
+#if 0
+
 #include "json.hpp"
 
 #include <algorithm>
@@ -320,3 +322,5 @@ namespace json {
         return *this != json->end();
     }
 }
+
+#endif

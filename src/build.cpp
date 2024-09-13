@@ -1,8 +1,6 @@
 #include "build.hpp"
 #include "build-defs.hpp"
 
-#include <json/json.hpp>
-
 #include <print>
 #include <string_view>
 #include <unordered_map>
@@ -22,7 +20,7 @@ void Build(const cfg::Step& step, const Backend& backend)
 
     PrintStepHeader("Finding sources");
 
-    std::vector<Source> sources;
+    std::vector<Task> tasks;
 
     for (auto& source : step.sources) {
         for (auto file : fs::recursive_directory_iterator(source.root,
@@ -30,65 +28,53 @@ void Build(const cfg::Step& step, const Backend& backend)
                 fs::directory_options::skip_permission_denied)) {
 
             auto ext = file.path().extension();
-            if      (ext == ".cpp") sources.emplace_back(file, SourceType::CppSource);
-            else if (ext == ".hpp") sources.emplace_back(file, SourceType::CppHeader);
-            else if (ext == ".ixx") sources.emplace_back(file, SourceType::CppInterface);
-        }
-    }
+            auto type = SourceType::Unknown;
 
-    for (auto& source : sources) {
-        switch (source.type) {
-            break;case SourceType::CppSource:    std::println("C++ Source    - {}", source.path.string());
-            break;case SourceType::CppHeader:    std::println("C++ Header    - {}", source.path.string());
-            break;case SourceType::CppInterface: std::println("C++ Interface - {}", source.path.string());
+            if      (ext == ".cpp") type = SourceType::CppSource;
+            else if (ext == ".hpp") type = SourceType::CppHeader;
+            else if (ext == ".ixx") type = SourceType::CppInterface;
+
+            if (type == SourceType::Unknown) continue;
+
+            auto& task = tasks.emplace_back();
+            task.source = { file, type };
+            for (auto& include_dir : step.include_dirs) {
+                task.include_dirs.emplace_back(include_dir);
+            }
+            for (auto& define : step.defines) {
+                task.defines.emplace_back(define);
+            }
+
+            switch (task.source.type) {
+                break;case SourceType::CppSource:    std::println("C++ Source    - {}", task.source.path.string());
+                break;case SourceType::CppHeader:    std::println("C++ Header    - {}", task.source.path.string());
+                break;case SourceType::CppInterface: std::println("C++ Interface - {}", task.source.path.string());
+            }
         }
     }
 
     PrintStepHeader("Getting dependency info");
 
     std::vector<std::string> dependency_info;
-    backend.FindDependencies(sources, dependency_info);
+    backend.FindDependencies(tasks, dependency_info);
 
     std::unordered_map<fs::path, std::string> marked_header_units;
     std::unordered_map<std::string, BuiltTask> built;
-    std::vector<Task> tasks;
-
-    PrintStepHeader("Defining std modules");
-
-    {
-        auto& task = tasks.emplace_back();
-        backend.GenerateStdModuleTask(task);
-    }
 
     PrintStepHeader("Parsing dependency P1689.json");
 
-    for (int i = 0; i < sources.size(); ++i) {
-        std::println("Dependency info for [{}]:", sources[i].path.string());
+    for (int i = 0; i < tasks.size(); ++i) {
+        auto& task = tasks[i];
 
-        auto& task = tasks.emplace_back();
-        task.source = sources[i];
+        std::println("Dependency info for [{}]:", task.source.path.string());
+        // std::println("{}", dependency_info[i]);
 
-        json::buffer json(dependency_info[i]);
-        json.tokenize();
-        auto rule = json.begin()["rules"].begin();
-
-        for (auto provided : rule["provides"]) {
-                auto logical_name = provided["logical-name"].string();
-                std::println("  provides: {}", logical_name);
-                task.produces.emplace_back(logical_name);
-        }
-
-        for (auto required : rule["requires"]) {
-            auto logical_name = required["logical-name"].string();
-            std::println("  requires: {}", logical_name);
-            task.depends_on.emplace_back(logical_name);
-            if (required["source-path"]) {
-                auto path = fs::path(required["source-path"].string());
-                std::println("    is header unit - {}", path.string());
-                marked_header_units[path] = logical_name;
-            }
-        }
+        ParseP1689(dependency_info[i], task, marked_header_units);
     }
+
+    PrintStepHeader("Defining std modules");
+
+    backend.GenerateStdModuleTask(tasks);
 
     PrintStepHeader("Marking header units");
 
@@ -116,11 +102,29 @@ void Build(const cfg::Step& step, const Backend& backend)
         task.produces.emplace_back(logical_name);
     }
 
+    PrintStepHeader("Trimming normal header tasks");
+
+    std::erase_if(tasks, [](const auto& task) {
+        return !task.is_header_unit && task.source.type == SourceType::CppHeader;
+    });
+
     PrintStepHeader("Executing build steps");
 
+    auto start = std::chrono::steady_clock::now();
+
+    int passes = 0;
+    int errors = 0;
     for (;;) {
         int remaining = 0;
         int executed = 0;
+
+        if (passes > 0) {
+            if (std::ranges::any_of(tasks, [](const auto& task) { return !task.completed; })) {
+                std::println(" -- Pass [{:02}] --------------------------", passes + 1);
+            }
+        }
+
+        std::vector<BuiltTask> completed;
 
         for (auto& task : tasks) {
             if (task.completed) continue;
@@ -135,16 +139,28 @@ void Build(const cfg::Step& step, const Backend& backend)
             executed++;
 
             BuiltTask result{&task};
-            backend.CompileTask(task, &result.obj, &result.bmi, built);
+            if (backend.CompileTask(task, &result.obj, &result.bmi, built)) {
+                completed.push_back(result);
+            } else {
+                errors++;
+                task.completed = true;
+            }
+        }
 
-            for (auto& provided : task.produces) {
-                built[provided] = result;
+        for (auto& build_task : completed) {
+            for (auto& provided : build_task.task->produces) {
+                built[provided] = build_task;
             }
 
-            task.completed = true;
+            build_task.task->completed = true;
         }
 
         if (remaining && !executed) {
+            if (errors) {
+                std::println("Blocked after {} failed compilations", errors);
+                return;
+            }
+
             std::println("Error: Illegal dependency chain detected");
             for (auto& task : tasks) {
                 if (task.completed) continue;
@@ -157,10 +173,23 @@ void Build(const cfg::Step& step, const Backend& backend)
             return;
         }
 
+        if (executed) {
+            passes++;
+        }
+
         if (remaining == 0) {
             break;
         }
     }
+
+    auto end = std::chrono::steady_clock::now();
+
+    PrintStepHeader("Reporting Build Stats");
+
+    std::println("Passes   = {}", passes);
+    std::println("Files    = {}", tasks.size());
+    std::println("MT Score = {:.2f}", float(tasks.size()) / passes);
+    std::println("Elapsed  = {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
 
     if (step.output) {
 
@@ -172,7 +201,7 @@ void Build(const cfg::Step& step, const Backend& backend)
 
         {
             auto cmd = (BuildDir / step.output->output).string();
-            std::println("[cmd] {}", cmd);
+            log_cmd(cmd);
             std::system(cmd.c_str());
         }
     }

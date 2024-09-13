@@ -3,3 +3,4 @@
 .vscode/
 out/
 compile_commands.json
+local_notes.txt

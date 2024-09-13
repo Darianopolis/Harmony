@@ -5,14 +5,12 @@
 #include <filesystem>
 #include <print>
 #include <fstream>
+#include <unordered_set>
 
 MsvcBackend::~MsvcBackend() = default;
 
-std::string PathToCmdString(const fs::path path, const fs::path& cwd = fs::current_path())
+std::string PathToCmdString(const fs::path path)
 {
-    // auto rel = fs::relative(path, cwd);
-    // auto str = rel.string();
-    (void)cwd;
     auto str = fs::absolute(path).string();
     std::ranges::transform(str, str.begin(), [](char c) {
         if (c == '/') return '\\';
@@ -21,13 +19,22 @@ std::string PathToCmdString(const fs::path path, const fs::path& cwd = fs::curre
     return std::format("\"{}\"", str);
 }
 
-void MsvcBackend::FindDependencies(std::span<const Source> sources, std::vector<std::string>& dependency_info_p1689_json) const
+void MsvcBackend::FindDependencies(std::span<const Task> tasks, std::vector<std::string>& dependency_info_p1689_json) const
 {
     fs::path output_location = BuildDir / "p1689.json";
 
-    for (auto& source : sources) {
-        auto cmd = std::format("cl.exe /std:c++latest /nologo /scanDependencies {} /TP {} ", PathToCmdString(output_location), PathToCmdString(source.path));
-        std::println("[cmd] {}", cmd);
+    for (auto& task : tasks) {
+        auto cmd = std::format("cl.exe /std:c++latest /nologo /scanDependencies {} /TP {} ", PathToCmdString(output_location), PathToCmdString(task.source.path));
+
+        for (auto& include_dir : task.include_dirs) {
+            cmd += std::format(" /I{}", PathToCmdString(include_dir));
+        }
+
+        for (auto& define : task.defines) {
+            cmd += std::format(" /D{}", define);
+        }
+
+        log_cmd(cmd);
         std::system(cmd.c_str());
         {
             std::ifstream file(output_location, std::ios::binary);
@@ -39,7 +46,7 @@ void MsvcBackend::FindDependencies(std::span<const Source> sources, std::vector<
     }
 }
 
-void MsvcBackend::GenerateStdModuleTask(Task& task) const
+void MsvcBackend::GenerateStdModuleTask(std::vector<Task>& tasks) const
 {
     auto tools_dir = fs::path(std::getenv("VCToolsInstallDir"));
     auto module_file = tools_dir / "modules/std.ixx";
@@ -50,33 +57,69 @@ void MsvcBackend::GenerateStdModuleTask(Task& task) const
 
     std::println("std module path: {}", module_file.string());
 
-    task.source.path = module_file;
-    task.source.type = SourceType::CppInterface;
-    task.produces.emplace_back("std");
+    {
+        auto& task = tasks.emplace_back();
+        task.source.path = module_file;
+        task.source.type = SourceType::CppInterface;
+        task.produces.emplace_back("std");
+    }
+
+    {
+        auto& task = tasks.emplace_back();
+        task.source.path = tools_dir / "modules/std.compat.ixx";
+        task.source.type = SourceType::CppInterface;
+        task.produces.emplace_back("std.compat");
+        task.depends_on.emplace_back("std");
+    }
 }
 
-void MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* output_bmi, const std::unordered_map<std::string, BuiltTask>& built) const
+bool MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* output_bmi, const std::unordered_map<std::string, BuiltTask>& built) const
 {
     auto build_dir = BuildDir;
 
-    auto cmd = std::format("cd {} && cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(build_dir), PathToCmdString(task.source.path, build_dir));
+    auto cmd = std::format("cd {} && cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(build_dir), PathToCmdString(task.source.path));
+
+    cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
+
+    for (auto& include_dir : task.include_dirs) {
+        cmd += std::format(" /I{}", PathToCmdString(include_dir));
+    }
+
+    for (auto& define : task.defines) {
+        cmd += std::format(" /D{}", define);
+    }
 
     if (task.is_header_unit) {
         cmd += std::format(" /exportHeader");
     }
 
-    for (auto& depends_on : task.depends_on) {
-        auto& built_dependency = built.at(depends_on);
-        auto* built_task = built_dependency.task;
-        if (built_task->is_header_unit) {
-            cmd += std::format(" /headerUnit {}={}", PathToCmdString(built_task->source.path, build_dir), PathToCmdString(built_dependency.bmi, build_dir));
-        } else {
-            cmd += std::format(" /reference {}={}", depends_on, PathToCmdString(built_dependency.bmi, build_dir));
-        }
-    }
+    // TODO: FIXME - This should be handled by shared build logic
+    std::unordered_set<std::string> seen;
+    auto AddDependencies = [&](this auto&& self, std::span<const std::string> dependencies) -> void {
+        for (auto& depends_on : dependencies) {
 
-    auto obj = task.source.path.filename().replace_extension(".obj");
-    auto bmi = task.source.path.filename().replace_extension(".ifc");
+            if (seen.contains(depends_on)) continue;
+            seen.emplace(depends_on);
+
+            auto& built_dependency = built.at(depends_on);
+            auto* built_task = built_dependency.task;
+            if (built_task->is_header_unit) {
+                cmd += std::format(" /headerUnit {}={}", PathToCmdString(built_task->source.path), PathToCmdString(built_dependency.bmi));
+            } else {
+                cmd += std::format(" /reference {}={}", depends_on, PathToCmdString(built_dependency.bmi));
+            }
+            self(built_task->depends_on);
+        }
+    };
+
+    AddDependencies(task.depends_on);
+
+    // TODO: FIXME - Resolve duplicate names in BUILD, backend should be stateless!
+    static uint32_t output_number = 0;
+
+    auto obj = fs::path(std::format("{}_{}.obj", task.source.path.filename().replace_extension("").string(), output_number));
+    auto bmi = fs::path(std::format("{}_{}.ifc", task.source.path.filename().replace_extension("").string(), output_number));
+    output_number++;
 
     *output_obj = build_dir / obj;
     *output_bmi = build_dir / bmi;
@@ -86,8 +129,8 @@ void MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* 
         cmd += std::format(" /Fo:{}", obj.string());
     }
 
-    std::println("[cmd] {}", cmd);
-    std::system(cmd.c_str());
+    log_cmd(cmd);
+    return std::system(cmd.c_str()) == EXIT_SUCCESS;
 }
 
 void MsvcBackend::LinkStep(const cfg::Artifact& artifact, const std::unordered_map<std::string, BuiltTask>& built) const
@@ -102,6 +145,5 @@ void MsvcBackend::LinkStep(const cfg::Artifact& artifact, const std::unordered_m
         cmd += std::format(" {}", PathToCmdString(provided.obj));
     }
 
-    std::println("[cmd] {}", cmd);
-    std::system(cmd.c_str());
+    log_cmd(cmd);
 }
