@@ -4,6 +4,7 @@
 #include <print>
 #include <string_view>
 #include <unordered_map>
+#include <mutex>
 
 void PrintStepHeader(std::string_view name)
 {
@@ -114,71 +115,140 @@ void Build(const cfg::Step& step, const Backend& backend)
 
     int passes = 0;
     int errors = 0;
-    for (;;) {
-        int remaining = 0;
-        int executed = 0;
 
-        if (passes > 0) {
-            if (std::ranges::any_of(tasks, [](const auto& task) { return !task.completed; })) {
-                std::println(" -- Pass [{:02}] --------------------------", passes + 1);
+    bool mt_compile = false;
+    if (!mt_compile) {
+
+        for (;;) {
+            int remaining = 0;
+            int executed = 0;
+
+            // if (passes > 0) {
+            //     if (std::ranges::any_of(tasks, [](const auto& task) { return task.state != TaskState::Complete; })) {
+            //         std::println(" -- Pass [{:02}] --------------------------", passes + 1);
+            //     }
+            // }
+
+            std::vector<BuiltTask> completed;
+
+            for (auto& task : tasks) {
+                if (task.state == TaskState::Complete) continue;
+
+                remaining++;
+
+                if (!std::ranges::all_of(task.depends_on,
+                        [&](auto& dependency) { return built.contains(dependency); })) {
+                    continue;
+                }
+
+                executed++;
+
+                BuiltTask result{&task};
+                if (backend.CompileTask(task, &result.obj, &result.bmi, built)) {
+                    completed.push_back(result);
+                } else {
+                    errors++;
+                    task.state = TaskState::Complete;
+                }
             }
-        }
 
-        std::vector<BuiltTask> completed;
+            for (auto& build_task : completed) {
+                for (auto& provided : build_task.task->produces) {
+                    built[provided] = build_task;
+                }
 
-        for (auto& task : tasks) {
-            if (task.completed) continue;
-
-            remaining++;
-
-            if (!std::ranges::all_of(task.depends_on,
-                    [&](auto& dependency) { return built.contains(dependency); })) {
-                continue;
+                build_task.task->state = TaskState::Complete;
             }
 
-            executed++;
+            if (remaining && !executed) {
+                if (errors) {
+                    std::println("Blocked after {} failed compilations", errors);
+                    return;
+                }
 
-            BuiltTask result{&task};
-            if (backend.CompileTask(task, &result.obj, &result.bmi, built)) {
-                completed.push_back(result);
-            } else {
-                errors++;
-                task.completed = true;
-            }
-        }
-
-        for (auto& build_task : completed) {
-            for (auto& provided : build_task.task->produces) {
-                built[provided] = build_task;
-            }
-
-            build_task.task->completed = true;
-        }
-
-        if (remaining && !executed) {
-            if (errors) {
-                std::println("Blocked after {} failed compilations", errors);
+                std::println("Error: Illegal dependency chain detected");
+                for (auto& task : tasks) {
+                    if (task.state == TaskState::Complete) continue;
+                    std::println("task[{}] blocked", task.source.path.string());
+                    for (auto& dep : task.depends_on) {
+                        if (built.contains(dep)) continue;
+                        std::println(" - {}", dep);
+                    }
+                }
                 return;
             }
 
-            std::println("Error: Illegal dependency chain detected");
-            for (auto& task : tasks) {
-                if (task.completed) continue;
-                std::println("task[{}] blocked", task.source.path.string());
-                for (auto& dep : task.depends_on) {
-                    if (built.contains(dep)) continue;
-                    std::println(" - {}", dep);
-                }
+            if (executed) {
+                passes++;
             }
-            return;
+
+            if (remaining == 0) {
+                break;
+            }
         }
 
-        if (executed) {
-            passes++;
-        }
+    } else {
 
-        if (remaining == 0) {
-            break;
+        std::mutex m;
+        std::atomic_uint32_t waiting = 0;
+        std::vector<BuiltTask> completed;
+
+        passes++;
+
+        for (;;) {
+            int remaining = 0;
+
+            if (auto wait = waiting.load(); wait != 0) {
+                if (wait == 0) return;
+                waiting.wait(wait);
+            }
+
+            for (auto& build_task : completed) {
+                if (build_task.success) {
+                    for (auto& provided : build_task.task->produces) {
+                        built[provided] = build_task;
+                    }
+                } else {
+                    errors++;
+                }
+
+                build_task.task->state = TaskState::Complete;
+            }
+
+            for (auto& task : tasks) {
+                if (task.state == TaskState::Complete) continue;
+
+                remaining++;
+
+                if (task.state == TaskState::Compiling) continue;
+
+                if (!std::ranges::all_of(task.depends_on,
+                        [&](auto& dependency) { return built.contains(dependency); })) {
+                    continue;
+                }
+
+                waiting++;
+
+                task.state = TaskState::Compiling;
+                std::thread t{[&, built] {
+                    BuiltTask result{&task};
+                    auto success = backend.CompileTask(task, &result.obj, &result.bmi, built);
+                    result.success = success;
+
+                    {
+                        std::scoped_lock l{ m };
+                        completed.emplace_back(std::move(result));
+                    }
+
+                    waiting--;
+                    waiting.notify_all();
+                }};
+                t.detach();
+            }
+
+            if (remaining == 0) {
+                break;
+            }
         }
     }
 

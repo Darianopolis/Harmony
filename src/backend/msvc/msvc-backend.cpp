@@ -6,6 +6,7 @@
 #include <print>
 #include <fstream>
 #include <unordered_set>
+#include <thread>
 
 MsvcBackend::~MsvcBackend() = default;
 
@@ -21,9 +22,16 @@ std::string PathToCmdString(const fs::path path)
 
 void MsvcBackend::FindDependencies(std::span<const Task> tasks, std::vector<std::string>& dependency_info_p1689_json) const
 {
-    fs::path output_location = BuildDir / "p1689.json";
+    dependency_info_p1689_json.resize(tasks.size());
 
-    for (auto& task : tasks) {
+    // fs::path output_location = BuildDir / "p1689.json";
+    // for (auto& task : tasks) {
+
+#pragma omp parallel for
+    for (uint32_t i = 0; i < tasks.size(); ++i) {
+        auto& task = tasks[i];
+        auto output_location = BuildDir / std::format("p1689_{}.json", i);
+
         auto cmd = std::format("cl.exe /std:c++latest /nologo /scanDependencies {} /TP {} ", PathToCmdString(output_location), PathToCmdString(task.source.path));
 
         for (auto& include_dir : task.include_dirs) {
@@ -39,7 +47,8 @@ void MsvcBackend::FindDependencies(std::span<const Task> tasks, std::vector<std:
         {
             std::ifstream file(output_location, std::ios::binary);
             auto size = fs::file_size(output_location);
-            auto& json_output = dependency_info_p1689_json.emplace_back();
+            // auto& json_output = dependency_info_p1689_json.emplace_back();
+            auto& json_output = dependency_info_p1689_json[i];
             json_output.resize(size, '\0');
             file.read(json_output.data(), size);
         }
@@ -80,6 +89,7 @@ bool MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* 
     auto cmd = std::format("cd {} && cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(build_dir), PathToCmdString(task.source.path));
 
     cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
+    // cmd += " /O2 /Ob3";
 
     for (auto& include_dir : task.include_dirs) {
         cmd += std::format(" /I{}", PathToCmdString(include_dir));
@@ -115,11 +125,9 @@ bool MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* 
     AddDependencies(task.depends_on);
 
     // TODO: FIXME - Resolve duplicate names in BUILD, backend should be stateless!
-    static uint32_t output_number = 0;
 
-    auto obj = fs::path(std::format("{}_{}.obj", task.source.path.filename().replace_extension("").string(), output_number));
-    auto bmi = fs::path(std::format("{}_{}.ifc", task.source.path.filename().replace_extension("").string(), output_number));
-    output_number++;
+    auto obj = fs::path(std::format("{}_{}.obj", task.source.path.filename().replace_extension("").string(), task.uid));
+    auto bmi = fs::path(std::format("{}_{}.ifc", task.source.path.filename().replace_extension("").string(), task.uid));
 
     *output_obj = build_dir / obj;
     *output_bmi = build_dir / bmi;
@@ -130,6 +138,11 @@ bool MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* 
     }
 
     log_cmd(cmd);
+
+    if (!task.produces.empty() && (task.produces.front() == "std" || task.produces.front() == "std.compat")) {
+        return true;
+    }
+
     return std::system(cmd.c_str()) == EXIT_SUCCESS;
 }
 
