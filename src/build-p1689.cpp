@@ -1,66 +1,43 @@
+#ifdef HARMONY_USE_IMPORT_STD
+import std;
+import std.compat;
+#endif
+
 #include "build.hpp"
 
-// #include <json/json.hpp>
-
-#pragma warning(push)
-#pragma warning(disable: 4100)
-#include <simdjson.h>
-#pragma warning(pop)
+#include "yyjson.h"
 
 void ParseP1689(std::string_view p1689, Task& task, std::unordered_map<fs::path, std::string>& marked_header_units)
 {
-    // json::buffer json(dependency_info[i]);
-    // json.tokenize();
-    // auto rule = json.begin()["rules"].begin();
+    auto* doc = yyjson_read(p1689.data(), p1689.size(), 0);
+    auto* root = yyjson_doc_get_root(doc);
 
-    // for (auto provided : rule["provides"]) {
-    //         auto logical_name = provided["logical-name"].string();
-    //         std::println("  provides: {}", logical_name);
-    //         task.produces.emplace_back(logical_name);
-    // }
+    auto rule = yyjson_arr_get_first(yyjson_obj_get(root, "rules"));
 
-    // for (auto required : rule["requires"]) {
-    //     auto logical_name = required["logical-name"].string();
-    //     std::println("  requires: {}", logical_name);
-    //     task.depends_on.emplace_back(logical_name);
-    //     if (required["source-path"]) {
-    //         auto path = fs::path(required["source-path"].string());
-    //         std::println("    is header unit - {}", path.string());
-    //         marked_header_units[path] = logical_name;
-    //     }
-    // }
-
-    using namespace simdjson;
-    ondemand::parser parser;
-    padded_string json_str(p1689);
-    auto doc = parser.iterate(json_str);
-
-    try {
-        auto rule = *doc["rules"].get_array().value().begin();
-        if (!rule["provides"].error()) {
-            for (auto provided : rule["provides"].get_array().value()) {
-                    auto logical_name = provided["logical-name"].get_string().value();
-                    std::println("  provides: {}", logical_name);
-                    task.produces.emplace_back(logical_name);
-            }
+    if (auto provided_list = yyjson_obj_get(rule, "provides")) {
+        size_t idx, max;
+        yyjson_val* provided;
+        yyjson_arr_foreach(provided_list, idx, max, provided) {
+            auto logical_name = yyjson_get_str(yyjson_obj_get(provided, "logical-name"));
+            std::println("  provides: {}", logical_name);
+            task.produces.emplace_back(logical_name);
         }
-
-        if (!rule["requires"].error()) {
-            for (auto required : rule["requires"].get_array().value()) {
-                auto logical_name = required["logical-name"].get_string().value();
-                std::println("  requires: {}", logical_name);
-                task.depends_on.emplace_back(logical_name);
-                if (!required["source-path"].error()) {
-                    auto path = fs::path(required["source-path"].get_string().value());
-                    std::println("    is header unit - {}", path.string());
-                    marked_header_units[path] = logical_name;
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        error(e.what());
-    } catch (...) {
-        error("Unknown Error!");
-
     }
+
+    if (auto required_list = yyjson_obj_get(rule, "requires")) {
+        size_t idx, max;
+        yyjson_val* required;
+        yyjson_arr_foreach(required_list, idx, max, required) {
+            auto logical_name = yyjson_get_str(yyjson_obj_get(required, "logical-name"));
+            std::println("  requires: {}", logical_name);
+            task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
+            if (auto source_path = yyjson_obj_get(required, "source-path")) {
+                auto path = fs::path(yyjson_get_str(source_path));
+                std::println("    is header unit - {}", path.string());
+                marked_header_units[path] = logical_name;
+            }
+        }
+    }
+
+    yyjson_doc_free(doc);
 }

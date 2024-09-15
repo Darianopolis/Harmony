@@ -1,12 +1,19 @@
+#ifdef HARMONY_USE_IMPORT_STD
+import std;
+import std.compat;
+#endif
+
 #include "msvc-backend.hpp"
 #include "configuration.hpp"
 
+#ifndef HARMONY_USE_IMPORT_STD
 #include <cstdlib>
 #include <filesystem>
 #include <print>
 #include <fstream>
 #include <unordered_set>
 #include <thread>
+#endif
 
 MsvcBackend::~MsvcBackend() = default;
 
@@ -55,7 +62,7 @@ void MsvcBackend::FindDependencies(std::span<const Task> tasks, std::vector<std:
     }
 }
 
-void MsvcBackend::GenerateStdModuleTask(std::vector<Task>& tasks) const
+void MsvcBackend::GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) const
 {
     auto tools_dir = fs::path(std::getenv("VCToolsInstallDir"));
     auto module_file = tools_dir / "modules/std.ixx";
@@ -66,27 +73,34 @@ void MsvcBackend::GenerateStdModuleTask(std::vector<Task>& tasks) const
 
     std::println("std module path: {}", module_file.string());
 
-    {
-        auto& task = tasks.emplace_back();
-        task.source.path = module_file;
-        task.source.type = SourceType::CppInterface;
-        task.produces.emplace_back("std");
+    if (std_task) {
+        std_task->source.path = module_file;
     }
 
-    {
-        auto& task = tasks.emplace_back();
-        task.source.path = tools_dir / "modules/std.compat.ixx";
-        task.source.type = SourceType::CppInterface;
-        task.produces.emplace_back("std.compat");
-        task.depends_on.emplace_back("std");
+    if (std_compat_task) {
+        std_compat_task->source.path = tools_dir / "modules/std.compat.ixx";
     }
 }
 
-bool MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* output_bmi, const std::unordered_map<std::string, BuiltTask>& built) const
+void MsvcBackend::AddTaskInfo(std::span<Task> tasks) const
 {
     auto build_dir = BuildDir;
 
-    auto cmd = std::format("cd {} && cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(build_dir), PathToCmdString(task.source.path));
+    for (auto& task : tasks) {
+        auto obj = fs::path(std::format("{}.obj", task.unique_name));
+        auto bmi = fs::path(std::format("{}.ifc", task.unique_name));
+
+        task.obj = build_dir / obj;
+        task.bmi = build_dir / bmi;
+    }
+}
+
+bool MsvcBackend::CompileTask(const Task& task) const
+{
+    auto build_dir = BuildDir;
+
+    auto cmd = std::format("cd /d {} && cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(build_dir), PathToCmdString(task.source.path));
+    // auto cmd = std::format("cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(task.source.path));
 
     cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
     // cmd += " /O2 /Ob3";
@@ -103,59 +117,46 @@ bool MsvcBackend::CompileTask(const Task& task, fs::path* output_obj, fs::path* 
         cmd += std::format(" /exportHeader");
     }
 
-    // TODO: FIXME - This should be handled by shared build logic
-    std::unordered_set<std::string> seen;
-    auto AddDependencies = [&](this auto&& self, std::span<const std::string> dependencies) -> void {
-        for (auto& depends_on : dependencies) {
+    // TODO: FIXME - Should this be handled by shared build logic?
+    std::unordered_set<std::string_view> seen;
+    auto AddDependencies = [&cmd, &seen](this auto&& self, const Task& task) -> void {
+        for (auto& depends_on : task.depends_on) {
 
-            if (seen.contains(depends_on)) continue;
-            seen.emplace(depends_on);
+            if (seen.contains(depends_on.name)) continue;
+            seen.emplace(depends_on.name);
 
-            auto& built_dependency = built.at(depends_on);
-            auto* built_task = built_dependency.task;
-            if (built_task->is_header_unit) {
-                cmd += std::format(" /headerUnit {}={}", PathToCmdString(built_task->source.path), PathToCmdString(built_dependency.bmi));
+            if (depends_on.source->is_header_unit) {
+                cmd += std::format(" /headerUnit {}={}", PathToCmdString(depends_on.source->source.path), PathToCmdString(depends_on.source->bmi));
             } else {
-                cmd += std::format(" /reference {}={}", depends_on, PathToCmdString(built_dependency.bmi));
+                cmd += std::format(" /reference {}={}", depends_on.name, PathToCmdString(depends_on.source->bmi));
             }
-            self(built_task->depends_on);
+            self(*depends_on.source);
         }
     };
 
-    AddDependencies(task.depends_on);
+    AddDependencies(task);
 
-    // TODO: FIXME - Resolve duplicate names in BUILD, backend should be stateless!
-
-    auto obj = fs::path(std::format("{}_{}.obj", task.source.path.filename().replace_extension("").string(), task.uid));
-    auto bmi = fs::path(std::format("{}_{}.ifc", task.source.path.filename().replace_extension("").string(), task.uid));
-
-    *output_obj = build_dir / obj;
-    *output_bmi = build_dir / bmi;
-
-    cmd += std::format(" /ifcOutput {}", bmi.string());
+    cmd += std::format(" /ifcOutput {}", task.bmi.filename().string());
     if (!task.is_header_unit) {
-        cmd += std::format(" /Fo:{}", obj.string());
+        cmd += std::format(" /Fo:{}", task.obj.filename().string());
     }
 
     log_cmd(cmd);
 
-    if (!task.produces.empty() && (task.produces.front() == "std" || task.produces.front() == "std.compat")) {
-        return true;
-    }
-
-    return std::system(cmd.c_str()) == EXIT_SUCCESS;
+    return std::system(cmd.c_str()) == 0;
 }
 
-void MsvcBackend::LinkStep(const cfg::Artifact& artifact, const std::unordered_map<std::string, BuiltTask>& built) const
+void MsvcBackend::LinkStep(const cfg::Artifact& artifact, std::span<const Task> tasks) const
 {
     auto build_dir = BuildDir;
 
     auto output_file = (build_dir / artifact.output).replace_extension(".exe");
 
-    auto cmd = std::format("cd {} && link /nologo /subsystem:console /OUT:{}", PathToCmdString(build_dir), PathToCmdString(output_file));
-    for (auto&[logical_name, provided] : built) {
-        if (provided.task->is_header_unit) continue;
-        cmd += std::format(" {}", PathToCmdString(provided.obj));
+    auto cmd = std::format("cd /d {} && link /nologo /subsystem:console /OUT:{}", PathToCmdString(build_dir), PathToCmdString(output_file));
+    // auto cmd = std::format("link /nologo /subsystem:console /OUT:{}", PathToCmdString(output_file));
+    for (auto& task : tasks) {
+        if (task.is_header_unit) continue;
+        cmd += std::format(" {}", PathToCmdString(task.obj));
     }
 
     log_cmd(cmd);

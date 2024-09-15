@@ -1,8 +1,10 @@
 #pragma once
 
+#ifndef HARMONY_USE_IMPORT_STD
 #include <filesystem>
 #include <print>
 #include <string_view>
+#endif
 
 namespace fs = std::filesystem;
 
