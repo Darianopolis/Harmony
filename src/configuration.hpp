@@ -2,19 +2,28 @@
 
 #include <core.hpp>
 
-namespace cfg {
-    struct Sources {
-        fs::path root;
-    };
+enum class SourceType
+{
+    Unknown,
 
-    struct Artifact {
-        fs::path output;
-    };
+    CppSource,
+    CppHeader,
+    CppInterface,
+};
 
-    struct Step {
-        std::vector<Sources> sources;
-        std::vector<fs::path> include_dirs;
-        std::vector<std::string> defines;
-        std::optional<Artifact> output;
-    };
-}
+struct Source
+{
+    fs::path path;
+    SourceType type = SourceType::Unknown;
+};
+
+struct Artifact {
+    fs::path output;
+};
+
+struct Step {
+    std::vector<Source> sources;
+    std::vector<fs::path> include_dirs;
+    std::vector<std::string> defines;
+    std::optional<Artifact> output;
+};

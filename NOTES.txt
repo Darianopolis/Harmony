@@ -1,0 +1,25 @@
+Precompiled Headers + Modules
+
+- Find all static/external preprocessor directives in all global module fragments and generate PCHs
+- Preprocess files to change global module fragment contents dynamically?
+- https://learn.microsoft.com/en-us/cpp/build/compare-inclusion-methods?view=msvc-170
+- https://learn.microsoft.com/en-us/cpp/build/creating-precompiled-header-files?view=msvc-170
+- https://learn.microsoft.com/en-us/cpp/build/reference/yc-create-precompiled-header-file?view=msvc-170
+- https://learn.microsoft.com/en-us/cpp/build/reference/yu-use-precompiled-header-file?view=msvc-170
+
+JSON Library
+
+- https://github.com/ibireme/yyjson
+
+Job System
+
+- https://blog.molecular-matters.com/2015/08/24/job-system-2-0-lock-free-work-stealing-part-1-basics/
+- https://benhoffman.tech/cpp/general/2018/11/13/cpp-job-system.html
+
+MSBuild Generation
+
+- https://learn.microsoft.com/en-us/cpp/build/msbuild-visual-cpp?view=msvc-170
+
+Removing responsibility from toolchain backends
+
+- Backends should generate compile commands instead of executing commands directly

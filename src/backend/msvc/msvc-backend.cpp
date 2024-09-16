@@ -99,36 +99,42 @@ bool MsvcBackend::CompileTask(const Task& task) const
 {
     auto build_dir = BuildDir;
 
-    auto cmd = std::format("cd /d {} && cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(build_dir), PathToCmdString(task.source.path));
-    // auto cmd = std::format("cl /c /nologo /std:c++latest /EHsc {}", PathToCmdString(task.source.path));
+    auto cmd = std::format("cd /d {} && cl", PathToCmdString(build_dir));
 
-    cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
+    std::vector<std::string> cmds;
+
+    cmds.emplace_back(std::format("/c /nologo /std:c++latest /EHsc {}", PathToCmdString(task.source.path)));
+
+    // cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
+    cmds.emplace_back("/Zc:preprocessor /permissive-");
+    cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++latest -MT");
     // cmd += " /O2 /Ob3";
+    // cmd += " /W4";
 
     for (auto& include_dir : task.include_dirs) {
-        cmd += std::format(" /I{}", PathToCmdString(include_dir));
+        cmds.emplace_back(std::format("/I{}", PathToCmdString(include_dir)));
     }
 
     for (auto& define : task.defines) {
-        cmd += std::format(" /D{}", define);
+        cmds.emplace_back(std::format("/D{}", define));
     }
 
     if (task.is_header_unit) {
-        cmd += std::format(" /exportHeader");
+        cmds.emplace_back(std::format("/exportHeader"));
     }
 
     // TODO: FIXME - Should this be handled by shared build logic?
     std::unordered_set<std::string_view> seen;
-    auto AddDependencies = [&cmd, &seen](this auto&& self, const Task& task) -> void {
+    auto AddDependencies = [&cmds, &seen](this auto&& self, const Task& task) -> void {
         for (auto& depends_on : task.depends_on) {
 
             if (seen.contains(depends_on.name)) continue;
             seen.emplace(depends_on.name);
 
             if (depends_on.source->is_header_unit) {
-                cmd += std::format(" /headerUnit {}={}", PathToCmdString(depends_on.source->source.path), PathToCmdString(depends_on.source->bmi));
+                cmds.emplace_back(std::format("/headerUnit {}={}", PathToCmdString(depends_on.source->source.path), PathToCmdString(depends_on.source->bmi)));
             } else {
-                cmd += std::format(" /reference {}={}", depends_on.name, PathToCmdString(depends_on.source->bmi));
+                cmds.emplace_back(std::format("/reference {}={}", depends_on.name, PathToCmdString(depends_on.source->bmi)));
             }
             self(*depends_on.source);
         }
@@ -136,9 +142,44 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     AddDependencies(task);
 
-    cmd += std::format(" /ifcOutput {}", task.bmi.filename().string());
+    cmds.emplace_back(std::format("/ifcOutput {}", task.bmi.filename().string()));
     if (!task.is_header_unit) {
-        cmd += std::format(" /Fo:{}", task.obj.filename().string());
+        cmds.emplace_back(std::format("/Fo:{}", task.obj.filename().string()));
+    }
+
+    // Generate cmd string, use command files to avoid cmd line size limit
+
+    {
+        size_t cmd_length = cmd.size();
+        for (auto& cmd_part : cmds) {
+            cmd_length += 1 + cmd_part.size();
+        }
+
+        constexpr uint32_t CmdSizeLimit = 8000;
+
+        if (cmd_length > CmdSizeLimit) {
+            static std::atomic_uint32_t cmd_file_id = 0;
+
+            auto cmd_dir = build_dir / "cmds";
+            fs::create_directories(cmd_dir);
+            auto cmd_path = cmd_dir / std::format("cmd.{}", cmd_file_id++);
+            std::ofstream out(cmd_path, std::ios::binary);
+            for (uint32_t i = 0; i < cmds.size(); ++i) {
+                if (i > 0) out.write("\n", 1);
+                out.write(cmds[i].data(), cmds[i].size());
+            }
+            out.flush();
+            out.close();
+
+            cmd += " @";
+            cmd += PathToCmdString(cmd_path);
+
+        } else {
+            for (auto& cmd_part : cmds) {
+                cmd += " ";
+                cmd += cmd_part;
+            }
+        }
     }
 
     log_cmd(cmd);
@@ -146,14 +187,13 @@ bool MsvcBackend::CompileTask(const Task& task) const
     return std::system(cmd.c_str()) == 0;
 }
 
-void MsvcBackend::LinkStep(const cfg::Artifact& artifact, std::span<const Task> tasks) const
+void MsvcBackend::LinkStep(const Artifact& artifact, std::span<const Task> tasks) const
 {
     auto build_dir = BuildDir;
 
     auto output_file = (build_dir / artifact.output).replace_extension(".exe");
 
     auto cmd = std::format("cd /d {} && link /nologo /subsystem:console /OUT:{}", PathToCmdString(build_dir), PathToCmdString(output_file));
-    // auto cmd = std::format("link /nologo /subsystem:console /OUT:{}", PathToCmdString(output_file));
     for (auto& task : tasks) {
         if (task.is_header_unit) continue;
         cmd += std::format(" {}", PathToCmdString(task.obj));

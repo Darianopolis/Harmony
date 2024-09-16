@@ -12,14 +12,17 @@ import std.compat;
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
+#include <fstream>
 #endif
+
+#include "yyjson.h"
 
 void PrintStepHeader(std::string_view name)
 {
     std::println("==== {} ====", name);
 }
 
-void ExpandStep(const cfg::Step& step, std::vector<Task>& tasks)
+void ExpandStep(const Step& step, std::vector<Task>& tasks)
 {
 
     PrintStepHeader("Finding sources");
@@ -27,18 +30,14 @@ void ExpandStep(const cfg::Step& step, std::vector<Task>& tasks)
     uint32_t source_id = 0;
 
     for (auto& source : step.sources) {
-        for (auto file : fs::recursive_directory_iterator(source.root,
-                fs::directory_options::follow_directory_symlink |
-                fs::directory_options::skip_permission_denied)) {
-
-            auto ext = file.path().extension();
-            auto type = SourceType::Unknown;
+        auto AddSourceFile = [&](const fs::path& file, SourceType type) {
+            auto ext = file.extension();
 
             if      (ext == ".cpp") type = SourceType::CppSource;
             else if (ext == ".hpp") type = SourceType::CppHeader;
             else if (ext == ".ixx") type = SourceType::CppInterface;
 
-            if (type == SourceType::Unknown) continue;
+            if (type == SourceType::Unknown) return;
 
             auto& task = tasks.emplace_back();
             task.source = { file, type };
@@ -56,11 +55,22 @@ void ExpandStep(const cfg::Step& step, std::vector<Task>& tasks)
                 break;case SourceType::CppHeader:    std::println("C++ Header    - {}", task.source.path.string());
                 break;case SourceType::CppInterface: std::println("C++ Interface - {}", task.source.path.string());
             }
+        };
+
+        if (fs::is_directory(source.path)) {
+            for (auto file : fs::recursive_directory_iterator(source.path,
+                    fs::directory_options::follow_directory_symlink |
+                    fs::directory_options::skip_permission_denied)) {
+
+                AddSourceFile(file.path(), source.type);
+            }
+        } else {
+            AddSourceFile(source.path, source.type);
         }
     }
 }
 
-void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend& backend)
+void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& backend)
 {
     fs::create_directories(BuildDir);
 
@@ -77,9 +87,40 @@ void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend&
         auto& task = tasks[i];
 
         std::println("Dependency info for [{}]:", task.source.path.string());
-        // std::println("{}", dependency_info[i]);
 
-        ParseP1689(dependency_info[i], task, marked_header_units);
+        auto& p1689 = dependency_info[i];
+
+        auto* doc = yyjson_read(p1689.data(), p1689.size(), 0);
+        auto* root = yyjson_doc_get_root(doc);
+
+        auto rule = yyjson_arr_get_first(yyjson_obj_get(root, "rules"));
+
+        if (auto provided_list = yyjson_obj_get(rule, "provides")) {
+            size_t idx, max;
+            yyjson_val* provided;
+            yyjson_arr_foreach(provided_list, idx, max, provided) {
+                auto logical_name = yyjson_get_str(yyjson_obj_get(provided, "logical-name"));
+                std::println("  provides: {}", logical_name);
+                task.produces.emplace_back(logical_name);
+            }
+        }
+
+        if (auto required_list = yyjson_obj_get(rule, "requires")) {
+            size_t idx, max;
+            yyjson_val* required;
+            yyjson_arr_foreach(required_list, idx, max, required) {
+                auto logical_name = yyjson_get_str(yyjson_obj_get(required, "logical-name"));
+                std::println("  requires: {}", logical_name);
+                task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
+                if (auto source_path = yyjson_obj_get(required, "source-path")) {
+                    auto path = fs::path(yyjson_get_str(source_path));
+                    std::println("    is header unit - {}", path.string());
+                    marked_header_units[path] = logical_name;
+                }
+            }
+        }
+
+        yyjson_doc_free(doc);
     }
 
     PrintStepHeader("Defining std modules");
@@ -137,15 +178,19 @@ void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend&
 
     PrintStepHeader("Generating external header unit tasks");
 
-    for (auto[path, logical_name] : marked_header_units) {
-        std::println("external header unit[{}] -> {}", path.string(), logical_name);
+    {
+        uint32_t ext_header_uid = 0;
+        for (auto[path, logical_name] : marked_header_units) {
+            std::println("external header unit[{}] -> {}", path.string(), logical_name);
 
-        auto& task = tasks.emplace_back();
-        task.source.path = path;
-        task.source.type = SourceType::CppHeader;
-        task.is_header_unit = true;
-        task.produces.emplace_back(logical_name);
-        task.external = true;
+            auto& task = tasks.emplace_back();
+            task.source.path = path;
+            task.source.type = SourceType::CppHeader;
+            task.is_header_unit = true;
+            task.produces.emplace_back(logical_name);
+            task.external = true;
+            task.unique_name = std::format("{}.{}E", path.filename().string(), ext_header_uid++);
+        }
     }
 
     PrintStepHeader("Trimming normal header tasks");
@@ -181,6 +226,68 @@ void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend&
         }
     }
 
+    bool compute_dependency_stats = true;
+    if (compute_dependency_stats) {
+        PrintStepHeader("Calculating dependency stats");
+
+        std::unordered_map<const void*, uint32_t> cache;
+        auto FindMaxDepth = [&](this auto&& self, const Task& task) {
+            if (cache.contains(&task)) {
+                return cache.at(&task);
+            }
+
+            uint32_t max_depth = 0;
+
+            for (auto& dep : task.depends_on) {
+                max_depth = std::max(max_depth, self(*dep.source));
+            }
+
+            cache[&task] = max_depth + 1;
+            return max_depth + 1;
+        };
+
+        {
+            uint32_t max_depth  = 0;
+            for (auto& task : tasks) {
+                max_depth = std::max(max_depth, FindMaxDepth(task));
+            }
+        }
+
+        uint32_t i = 0;
+        auto ReadMaxDepthChain = [&](this auto&& self, const Task& task) -> void {
+            std::println("[{}] = {}", i++, task.source.path.string());
+
+            uint32_t max_depth = 0;
+            const Task* max_task = nullptr;
+
+            for (auto& dep : task.depends_on) {
+                if (cache.at(dep.source) >= max_depth) {
+                    max_depth = cache.at(dep.source);
+                    max_task = dep.source;
+                }
+            }
+
+            if (max_depth > 0) {
+                self(*max_task);
+            }
+        };
+
+        {
+            uint32_t max_depth = 0;
+            const Task* max_task = nullptr;
+
+            for (auto& task : tasks) {
+                if (cache.at(&task) >= max_depth) {
+                    max_depth = cache.at(&task);
+                    max_task = &task;
+                }
+            }
+
+            std::println("Maximum task depth = {}", max_depth);
+            ReadMaxDepthChain(*max_task);
+        }
+    }
+
     PrintStepHeader("Filling in backend task info");
 
     backend.AddTaskInfo(tasks);
@@ -213,16 +320,25 @@ void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend&
     // Filter on dependent module changes
 
     {
-        auto CheckForUpdateRequired = [](this auto&& self, Task& task) {
-            if (task.state != TaskState::Complete) return true;
+        std::unordered_map<void*, bool> cache;
+        auto CheckForUpdateRequired = [&](this auto&& self, Task& task) {
+            if (cache.contains(&task)) {
+                return cache.at(&task);
+            }
+            if (task.state != TaskState::Complete) {
+                cache[&task] = true;
+                return true;
+            }
 
             for (auto& dep : task.depends_on) {
                 if (self(*dep.source)) {
                     task.state = TaskState::Waiting;
+                    cache[&task] = true;
                     return true;
                 }
             }
 
+            cache[&task] = false;
             return false;
         };
 
@@ -248,11 +364,12 @@ void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend&
         else if (task.state == TaskState::Waiting) stats.to_compile++;
     }
 
+    std::println("Compiling {} files ({} up to date)", stats.to_compile, stats.skipped);
+
     auto start = std::chrono::steady_clock::now();
 
     bool mt_compile = true;
     {
-
         std::mutex m;
         std::atomic_uint32_t num_started = 0;
         std::atomic_uint32_t num_complete = 0;
@@ -268,6 +385,7 @@ void Build(std::vector<Task>& tasks, const cfg::Artifact* target, const Backend&
                 // wait if no new complete and at least one task in-flight
                 num_complete.wait(_num_complete);
             }
+            last_num_complete = _num_complete;
 
             for (auto& task : tasks) {
                 auto cur_state = std::atomic_ref(task.state).load();

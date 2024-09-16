@@ -17,10 +17,10 @@ int main(
         return 1;
     }
 
-    cfg::Step step{
-        .sources = {{
-            .root = argv[1],
-        }},
+    Step step{
+        .sources = {
+            {.path = argv[1]}
+        },
     };
 
     step.include_dirs.emplace_back(argv[1]);

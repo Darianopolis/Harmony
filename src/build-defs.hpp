@@ -1,21 +1,7 @@
 #pragma once
 
 #include <core.hpp>
-
-enum class SourceType
-{
-    Unknown,
-
-    CppSource,
-    CppHeader,
-    CppInterface,
-};
-
-struct Source
-{
-    fs::path path;
-    SourceType type;
-};
+#include <configuration.hpp>
 
 enum class TaskState
 {
