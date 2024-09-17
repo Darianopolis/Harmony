@@ -103,7 +103,13 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     std::vector<std::string> cmds;
 
-    cmds.emplace_back(std::format("/c /nologo /std:c++latest /EHsc {}", PathToCmdString(task.source.path)));
+    cmds.emplace_back(std::format("/c /nologo /std:c++latest /EHsc"));
+    switch (task.source.type) {
+        break;case SourceType::CppSource: cmds.emplace_back(std::format("/TP {}", PathToCmdString(task.source.path)));
+        break;case SourceType::CppHeader: error("Cannot compile a header");
+        break;case SourceType::CppInterface: cmds.emplace_back(std::format("/interface /TP {}", PathToCmdString(task.source.path)));
+        break;default: error("Cannot compile: unknown source type!");
+    }
 
     // cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
     cmds.emplace_back("/Zc:preprocessor /permissive-");

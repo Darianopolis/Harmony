@@ -1,7 +1,6 @@
 #pragma once
 
 #include <core.hpp>
-#include <build-defs.hpp>
 #include <configuration.hpp>
 
 #ifndef HARMONY_USE_IMPORT_STD

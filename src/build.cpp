@@ -4,7 +4,6 @@ import std.compat;
 #endif
 
 #include "build.hpp"
-#include "build-defs.hpp"
 
 #ifndef HARMONY_USE_IMPORT_STD
 #include <print>
@@ -15,59 +14,11 @@ import std.compat;
 #include <fstream>
 #endif
 
-#include "yyjson.h"
+#include <json.hpp>
 
 void PrintStepHeader(std::string_view name)
 {
     std::println("==== {} ====", name);
-}
-
-void ExpandStep(const Step& step, std::vector<Task>& tasks)
-{
-
-    PrintStepHeader("Finding sources");
-
-    uint32_t source_id = 0;
-
-    for (auto& source : step.sources) {
-        auto AddSourceFile = [&](const fs::path& file, SourceType type) {
-            auto ext = file.extension();
-
-            if      (ext == ".cpp") type = SourceType::CppSource;
-            else if (ext == ".hpp") type = SourceType::CppHeader;
-            else if (ext == ".ixx") type = SourceType::CppInterface;
-
-            if (type == SourceType::Unknown) return;
-
-            auto& task = tasks.emplace_back();
-            task.source = { file, type };
-            for (auto& include_dir : step.include_dirs) {
-                task.include_dirs.emplace_back(include_dir);
-            }
-            for (auto& define : step.defines) {
-                task.defines.emplace_back(define);
-            }
-
-            task.unique_name = std::format("{}.{}", task.source.path.filename().replace_extension("").string(), source_id++);
-
-            switch (task.source.type) {
-                break;case SourceType::CppSource:    std::println("C++ Source    - {}", task.source.path.string());
-                break;case SourceType::CppHeader:    std::println("C++ Header    - {}", task.source.path.string());
-                break;case SourceType::CppInterface: std::println("C++ Interface - {}", task.source.path.string());
-            }
-        };
-
-        if (fs::is_directory(source.path)) {
-            for (auto file : fs::recursive_directory_iterator(source.path,
-                    fs::directory_options::follow_directory_symlink |
-                    fs::directory_options::skip_permission_denied)) {
-
-                AddSourceFile(file.path(), source.type);
-            }
-        } else {
-            AddSourceFile(source.path, source.type);
-        }
-    }
 }
 
 void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& backend)
@@ -95,28 +46,20 @@ void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& back
 
         auto rule = yyjson_arr_get_first(yyjson_obj_get(root, "rules"));
 
-        if (auto provided_list = yyjson_obj_get(rule, "provides")) {
-            size_t idx, max;
-            yyjson_val* provided;
-            yyjson_arr_foreach(provided_list, idx, max, provided) {
-                auto logical_name = yyjson_get_str(yyjson_obj_get(provided, "logical-name"));
-                std::println("  provides: {}", logical_name);
-                task.produces.emplace_back(logical_name);
-            }
+        for (auto provided : yyjson_arr_range(yyjson_obj_get(rule, "provides"))) {
+            auto logical_name = yyjson_get_str(yyjson_obj_get(provided, "logical-name"));
+            std::println("  provides: {}", logical_name);
+            task.produces.emplace_back(logical_name);
         }
 
-        if (auto required_list = yyjson_obj_get(rule, "requires")) {
-            size_t idx, max;
-            yyjson_val* required;
-            yyjson_arr_foreach(required_list, idx, max, required) {
-                auto logical_name = yyjson_get_str(yyjson_obj_get(required, "logical-name"));
-                std::println("  requires: {}", logical_name);
-                task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
-                if (auto source_path = yyjson_obj_get(required, "source-path")) {
-                    auto path = fs::path(yyjson_get_str(source_path));
-                    std::println("    is header unit - {}", path.string());
-                    marked_header_units[path] = logical_name;
-                }
+        for (auto required : yyjson_arr_range(yyjson_obj_get(rule, "requires"))) {
+            auto logical_name = yyjson_get_str(yyjson_obj_get(required, "logical-name"));
+            std::println("  requires: {}", logical_name);
+            task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
+            if (auto source_path = yyjson_obj_get(required, "source-path")) {
+                auto path = fs::path(yyjson_get_str(source_path));
+                std::println("    is header unit - {}", path.string());
+                marked_header_units[path] = logical_name;
             }
         }
 
@@ -302,7 +245,7 @@ void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& back
 
     for (auto& task : tasks) {
         // TODO: Filter for *all* tasks unless -clean specified
-        if (!task.external) continue;
+        // if (!task.external) continue;
 
         if (task.is_header_unit) {
             if (!fs::exists(task.bmi) || fs::last_write_time(task.source.path) > fs::last_write_time(task.bmi)) {

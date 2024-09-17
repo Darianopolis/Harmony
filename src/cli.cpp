@@ -8,30 +8,36 @@ import std.compat;
 
 #include <backend/msvc/msvc-backend.hpp>
 
-int main(
-    [[maybe_unused]] int argc,
-    [[maybe_unused]] char* argv[])
+int main(int argc, char* argv[])
 {
-    if (argc < 2) {
-        std::println("Expected root path");
-        return 1;
-    }
-
-    Step step{
-        .sources = {
-            {.path = argv[1]}
-        },
+    auto PrintUsage = [] {
+        error("Usage: [build file] [-fetch] [-clean]");
     };
 
-    step.include_dirs.emplace_back(argv[1]);
+    if (argc < 2) {
+        PrintUsage();
+    }
 
+    bool fetch = false;
+    bool clean = false;
     for (int i = 2; i < argc; ++i) {
-        step.defines.emplace_back(argv[i]);
+             if ("-fetch"sv == argv[i]) fetch = true;
+        else if ("-clean"sv == argv[i]) clean = true;
+        else {
+            std::println("Unknown switch: {}", argv[i]);
+            PrintUsage();
+        }
+    }
+
+    auto config = read_file(argv[1]);
+
+    if (fetch) {
+        Fetch(config, clean);
     }
 
     std::vector<Task> tasks;
-    ExpandStep(step, tasks);
+    ParseConfig(config, tasks);
 
     MsvcBackend msvc;
-    Build(tasks, step.output ? &step.output.value() : nullptr, msvc);
+    Build(tasks, nullptr, msvc);
 }

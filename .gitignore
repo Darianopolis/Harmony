@@ -1,6 +1,8 @@
 .cache/
 .harmony/
 .vscode/
+.deps/
 out/
 compile_commands.json
+harmony.build.jsonc
 NOTES.local.txt
