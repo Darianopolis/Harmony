@@ -41,29 +41,28 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
 
         auto& p1689 = dependency_info[i];
 
-        auto* doc = yyjson_read(p1689.data(), p1689.size(), YYJSON_READ_ALLOW_COMMENTS | YYJSON_READ_ALLOW_TRAILING_COMMAS);
-        auto* root = yyjson_doc_get_root(doc);
+        JsonDocument doc(p1689);
+        for (auto rule : doc.root()["rules"]) {
 
-        auto rule = yyjson_arr_get_first(yyjson_obj_get(root, "rules"));
+            rule[0];
 
-        for (auto provided : yyjson_arr_range(yyjson_obj_get(rule, "provides"))) {
-            auto logical_name = yyjson_get_str(yyjson_obj_get(provided, "logical-name"));
-            std::println("  provides: {}", logical_name);
-            task.produces.emplace_back(logical_name);
-        }
+            for (auto provided : rule["provides"]) {
+                auto logical_name = provided["logical-name"].string();
+                std::println("  provides: {}", logical_name);
+                task.produces.emplace_back(logical_name);
+            }
 
-        for (auto required : yyjson_arr_range(yyjson_obj_get(rule, "requires"))) {
-            auto logical_name = yyjson_get_str(yyjson_obj_get(required, "logical-name"));
-            std::println("  requires: {}", logical_name);
-            task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
-            if (auto source_path = yyjson_obj_get(required, "source-path")) {
-                auto path = fs::path(yyjson_get_str(source_path));
-                std::println("    is header unit - {}", path.string());
-                marked_header_units[path] = logical_name;
+            for (auto required : rule["requires"]) {
+                auto logical_name = required["logical-name"].string();
+                std::println("  requires: {}", logical_name);
+                task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
+                if (auto source_path = required["source-path"]) {
+                    auto path = fs::path(source_path.string());
+                    std::println("    is header unit - {}", path.string());
+                    marked_header_units[path] = logical_name;
+                }
             }
         }
-
-        yyjson_doc_free(doc);
     }
 
     PrintStepHeader("Defining std modules");

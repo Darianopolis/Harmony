@@ -104,7 +104,7 @@ void SafeCompleteCmd(std::string& cmd, std::vector<std::string>& cmds)
         cmd_length += 1 + cmd_part.size();
     }
 
-    constexpr uint32_t CmdSizeLimit = 8000;
+    constexpr uint32_t CmdSizeLimit = 4000;
 
     if (cmd_length > CmdSizeLimit) {
         static std::atomic_uint32_t cmd_file_id = 0;
@@ -141,8 +141,13 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     cmds.emplace_back(std::format("/c /nologo /std:c++latest /EHsc"));
     switch (task.source.type) {
+        break;case SourceType::CSource: cmds.emplace_back(std::format("/TC {}", PathToCmdString(task.source.path)));
         break;case SourceType::CppSource: cmds.emplace_back(std::format("/TP {}", PathToCmdString(task.source.path)));
-        break;case SourceType::CppHeader: error("Cannot compile a header");
+        break;case SourceType::CppHeader: {
+            if (task.is_header_unit) {
+                cmds.emplace_back(std::format("/exportHeader /TP {}", PathToCmdString(task.source.path)));
+            } else error("Attempted to compile header that isn't being exported as a header unit");
+        }
         break;case SourceType::CppInterface: cmds.emplace_back(std::format("/interface /TP {}", PathToCmdString(task.source.path)));
         break;default: error("Cannot compile: unknown source type!");
     }
@@ -248,7 +253,7 @@ void MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 
     SafeCompleteCmd(cmd, cmds);
 
-    std::println("[cmd] {}", cmd);
+    log_cmd(cmd);
 
     std::system(cmd.c_str());
 }

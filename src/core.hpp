@@ -11,7 +11,8 @@ namespace fs = std::filesystem;
 
 using namespace std::literals;
 
-#define line_debug std::println("@@@@ - {} @ {}", __LINE__, __FILE__);
+#define HARMONY_DEBUG_LINE std::println("@@@@ - {} @ {}", __LINE__, __FILE__);
+#define HARMONY_DEBUG_EXPR(val) std::println(#val " = {}", (val));
 
 inline const fs::path BuildDir = ".harmony";
 
@@ -24,7 +25,7 @@ void log_cmd(std::string_view cmd)
     }
 }
 
-inline
+[[noreturn]] inline
 void error(std::string_view message)
 {
     std::println("[ERROR] {}", message);

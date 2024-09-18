@@ -11,6 +11,8 @@ enum class SourceType
 {
     Unknown,
 
+    CSource,
+
     CppSource,
     CppHeader,
     CppInterface,

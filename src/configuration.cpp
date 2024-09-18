@@ -20,17 +20,14 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
 
     uint32_t source_id = 0;
 
-    auto doc = yyjson_read(input.data(), input.size(), YYJSON_READ_ALLOW_COMMENTS | YYJSON_READ_ALLOW_TRAILING_COMMAS);
-    auto root = yyjson_doc_get_root(doc);
-
-    std::println("root = {}", (void*)root);
-
     auto deps_folder = fs::path(".deps");
+    JsonDocument doc(input);
 
-    for (auto in_target : yyjson_arr_range(yyjson_obj_get(root, "targets"))) {
-        auto name = yyjson_get_str(yyjson_obj_get(in_target, "name"));
+    for (auto in_target :  doc.root()["targets"]) {
+        auto name = in_target["name"].string();
+        std::println("name = {}", (bool)name);
         auto dir = deps_folder / name;
-        if (auto dir_str = yyjson_get_str(yyjson_obj_get(in_target, "dir"))) {
+        if (auto dir_str = in_target["dir"].string()) {
             std::println("Custom dir path: {}", dir_str);
             dir = dir_str;
         }
@@ -41,12 +38,12 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
         auto& out_target = out_targets[name];
         out_target.name = name;
 
-        for (auto source : yyjson_arr_range(yyjson_obj_get(in_target, "sources"))) {
-            if (yyjson_is_obj(source)) {
-                std::println("  sources(type = {})", yyjson_get_str(yyjson_obj_get(source, "type")));
+        for (auto source : in_target["sources"]) {
+            if (source.obj()) {
+                std::println("  sources(type = {})", source["type"].string());
 
                 auto type = [&] {
-                    auto type_str = yyjson_get_str(yyjson_obj_get(source, "type"));
+                    auto type_str = source["type"].string();
                     if (!type_str) error("Source object must contain 'type'");
                     if ("c++"sv == type_str) return SourceType::CppSource;
                     if ("c++header"sv == type_str) return SourceType::CppHeader;
@@ -54,46 +51,46 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
                     error(std::format("Unknown source type: [{}]", type_str));
                 }();
 
-                for (auto file : yyjson_arr_range(yyjson_obj_get(source, "paths"))) {
-                    std::println("    {}", yyjson_get_str(file));
-                    out_target.sources.emplace_back(dir / yyjson_get_str(file), type);
+                for (auto file : source["paths"]) {
+                    std::println("    {}", file.string());
+                    out_target.sources.emplace_back(dir / file.string(), type);
                 }
             } else {
-                std::println("  source: {}", yyjson_get_str(source));
-                out_target.sources.emplace_back(dir / yyjson_get_str(source), SourceType::Unknown);
+                std::println("  source: {}", source.string());
+                out_target.sources.emplace_back(dir / source.string(), SourceType::Unknown);
             }
         }
 
-        for (auto include : yyjson_arr_range(yyjson_obj_get(in_target, "include"))) {
-            out_target.include_dirs.emplace_back(dir / yyjson_get_str(include));
+        for (auto include : in_target["include"]) {
+            out_target.include_dirs.emplace_back(dir / include.string());
         }
 
-        for (auto define : yyjson_arr_range(yyjson_obj_get(in_target, "define"))) {
-            out_target.define_build.emplace_back(yyjson_get_str(define));
-            out_target.define_import.emplace_back(yyjson_get_str(define));
+        for (auto define : in_target["define"]) {
+            out_target.define_build.emplace_back(define.string());
+            out_target.define_import.emplace_back(define.string());
         }
 
-        for (auto define : yyjson_arr_range(yyjson_obj_get(in_target, "define-build"))) {
-            out_target.define_build.emplace_back(yyjson_get_str(define));
+        for (auto define : in_target["define-build"]) {
+            out_target.define_build.emplace_back(define.string());
         }
 
-        for (auto define : yyjson_arr_range(yyjson_obj_get(in_target, "define-import"))) {
-            out_target.define_import.emplace_back(yyjson_get_str(define));
+        for (auto define : in_target["define-import"]) {
+            out_target.define_import.emplace_back(define.string());
         }
 
-        for (auto import : yyjson_arr_range(yyjson_obj_get(in_target, "import"))) {
-            out_target.import.emplace_back(yyjson_get_str(import));
+        for (auto import : in_target["import"]) {
+            out_target.import.emplace_back(import.string());
         }
 
-        for (auto link : yyjson_arr_range(yyjson_obj_get(in_target, "link"))) {
-            out_target.links.emplace_back(dir / yyjson_get_str(link));
+        for (auto link : in_target["link"]) {
+            out_target.links.emplace_back(dir / link.string());
         }
 
-        if (auto executable = yyjson_obj_get(in_target, "executable")) {
+        if (auto executable = in_target["executable"]) {
             out_target.executable.emplace(
-                yyjson_get_str(yyjson_obj_get(executable, "name")),
+                executable["name"].string(),
                 [&] {
-                    auto type_str = yyjson_get_str(yyjson_obj_get(executable, "type"));
+                    auto type_str = executable["type"].string();
                     if (!type_str) error("Executable must specify type [console] or [window]");
                     if ("console"sv == type_str) return ExecutableType::Console;
                     if ("window"sv == type_str) return ExecutableType::Window;
@@ -163,7 +160,8 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
             auto AddSourceFile = [&](const fs::path& file, SourceType type) {
                 auto ext = file.extension();
 
-                if      (ext == ".cpp") type = SourceType::CppSource;
+                if      (ext == ".c") type = SourceType::CSource;
+                else if (ext == ".cpp") type = SourceType::CppSource;
                 else if (ext == ".hpp") type = SourceType::CppHeader;
                 else if (ext == ".ixx") type = SourceType::CppInterface;
 
@@ -211,13 +209,8 @@ std::string QuotedAbsPath(const fs::path path)
 
 void Fetch(std::string_view config, bool clean)
 {
-    auto doc = yyjson_read(config.data(), config.size(), YYJSON_READ_ALLOW_COMMENTS | YYJSON_READ_ALLOW_TRAILING_COMMAS);
-
-    auto root = yyjson_doc_get_root(doc);
-
     auto deps_folder = fs::path(".deps");
     fs::create_directories(deps_folder);
-
 
     curl_global_init(CURL_GLOBAL_ALL);
 
@@ -226,6 +219,7 @@ void Fetch(std::string_view config, bool clean)
     constexpr uint32_t stage_git_prepare = 2;
     constexpr uint32_t stage_git_build = 3;
 
+    JsonDocument doc(config);
     for (uint32_t stage = 0; stage < 4; ++stage) {
 
         // phase 0 - git fetch/pull + download
@@ -242,22 +236,22 @@ void Fetch(std::string_view config, bool clean)
 
         std::vector<std::jthread> tasks;
 
-        for (auto target : yyjson_arr_range(yyjson_obj_get(root, "targets"))) {
-            auto name = yyjson_get_str(yyjson_obj_get(target, "name"));
+        for (auto target : doc.root()["targets"]) {
+            auto name = target["name"].string();
             auto dir = deps_folder / name;
 
             tasks.emplace_back([=] {
 
-                if (auto _git = yyjson_obj_get(target, "git")) {
+                if (auto _git = target["git"]) {
                     if (stage == stage_fetch) {
 
                         std::string url;
                         std::optional<std::string> branch;
-                        if (yyjson_is_str(_git)) {
-                            url = yyjson_get_str(_git);
+                        if (_git.string()) {
+                            url = _git.string();
                         } else {
-                            url = yyjson_get_str(yyjson_obj_get(_git, "url"));
-                            branch = yyjson_get_str(yyjson_obj_get(_git, "branch"));
+                            url = _git["url"].string();
+                            branch = _git["branch"].string();
                         }
 
                         if (fs::exists(dir)) {
@@ -271,7 +265,7 @@ void Fetch(std::string_view config, bool clean)
                             }
                             cmd += " && git pull";
 
-                            std::println("[cmd] {}", cmd);
+                            log_cmd(cmd);
 
                             std::system(cmd.c_str());
                         } else {
@@ -282,15 +276,15 @@ void Fetch(std::string_view config, bool clean)
                             }
                             cmd += std::format(" .deps/{}", name);
 
-                            std::println("[cmd] {}", cmd);
+                            log_cmd(cmd);
 
                             std::system(cmd.c_str());
                         }
                     }
 
-                } else if (auto download = yyjson_obj_get(target, "download")) {
-                    auto url = yyjson_get_str(yyjson_obj_get(download, "url"));
-                    auto type = yyjson_get_str(yyjson_obj_get(download, "type"));
+                } else if (auto download = target["download"]) {
+                    auto url = download["url"].string();
+                    auto type = download["type"].string();
 
                     auto tmp_file = dir.string() + ".tmp";
 
@@ -320,7 +314,7 @@ void Fetch(std::string_view config, bool clean)
                                 std::string cmd;
                                 cmd += std::format(" cd .deps && 7z x -y {0}.tmp -o{0}", name);
 
-                                std::println("[cmd] {}", cmd);
+                                log_cmd(cmd);
                                 std::system(cmd.c_str());
                             }
 
@@ -329,7 +323,7 @@ void Fetch(std::string_view config, bool clean)
                     }
                 }
 
-                if (auto cmake = yyjson_obj_get(target, "cmake")) {
+                if (auto cmake = target["cmake"]) {
                     (void)cmake;
 
                     auto cmake_build_dir = ".harmony-cmake-build";
@@ -343,11 +337,11 @@ void Fetch(std::string_view config, bool clean)
                             cmd += std::format(" cd .deps/{}", name);
                             cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={0}/install -DCMAKE_BUILD_TYPE={1} -B {0}", cmake_build_dir, profile);
 
-                            for (auto option : yyjson_arr_range(yyjson_obj_get(cmake, "options"))) {
-                                cmd += std::format(" -D{}", yyjson_get_str(option));
+                            for (auto option : cmake["options"]) {
+                                cmd += std::format(" -D{}", option.string());
                             }
 
-                            std::println("[cmd] {}", cmd);
+                            log_cmd(cmd);
                             std::system(cmd.c_str());
                         }
                     }
@@ -357,7 +351,7 @@ void Fetch(std::string_view config, bool clean)
                         cmd += std::format(" cd .deps/{}", name);
                         cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", cmake_build_dir, profile);
 
-                        std::println("[cmd] {}", cmd);
+                        log_cmd(cmd);
                         std::system(cmd.c_str());
                     }
                 }
