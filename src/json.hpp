@@ -16,7 +16,11 @@ struct yyjson_arr_iterator
         : idx(0)
         , max(yyjson_arr_size(arr))
         , val(yyjson_arr_get_first(arr))
-    {}
+    {
+        if (arr && !yyjson_is_arr(arr)) {
+            error("yyjson_arr_iterator expected array, but got different type!");
+        }
+    }
 
     using value_type = yyjson_val*;
     using difference_type = std::ptrdiff_t;

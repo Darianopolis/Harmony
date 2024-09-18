@@ -5,4 +5,4 @@
 
 #include <backend/backend.hpp>
 
-void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& backend);
+void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> targets, const Backend& backend);

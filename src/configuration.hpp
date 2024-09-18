@@ -2,6 +2,11 @@
 
 #include <core.hpp>
 
+#ifndef HARMONY_USE_STD_MODULES
+#include <unordered_set>
+#include <unordered_map>
+#endif
+
 enum class SourceType
 {
     Unknown,
@@ -17,19 +22,27 @@ struct Source
     SourceType type = SourceType::Unknown;
 };
 
-struct Artifact {
-    fs::path output;
+enum class ExecutableType
+{
+    Console,
+    Window,
+};
+
+struct Executable {
+    fs::path path;
+    ExecutableType type;
 };
 
 struct Target {
     std::string name;
     std::vector<Source> sources;
     std::vector<fs::path> include_dirs;
+    std::vector<fs::path> links;
     std::vector<std::string> define_build;
     std::vector<std::string> define_import;
-    std::vector<fs::path> links;
-    std::optional<Artifact> output;
     std::vector<std::string> import;
+    std::unordered_set<Target*> flattened_imports;
+    std::optional<Executable> executable;
 };
 
 enum class TaskState
@@ -48,6 +61,7 @@ struct Dependency {
 };
 
 struct Task {
+    Target* target;
     Source source;
     fs::path bmi;
     fs::path obj;
@@ -65,5 +79,5 @@ struct Task {
     bool external = false;
 };
 
-void ParseConfig(std::string_view config, std::vector<Task>& tasks);
+void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unordered_map<std::string, Target>& out_targets);
 void Fetch(std::string_view config, bool clean);

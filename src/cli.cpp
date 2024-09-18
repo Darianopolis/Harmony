@@ -35,9 +35,10 @@ int main(int argc, char* argv[])
         Fetch(config, clean);
     }
 
+    std::unordered_map<std::string, Target> targets;
     std::vector<Task> tasks;
-    ParseConfig(config, tasks);
+    ParseConfig(config, tasks, targets);
 
     MsvcBackend msvc;
-    Build(tasks, nullptr, msvc);
+    Build(tasks, targets, msvc);
 }

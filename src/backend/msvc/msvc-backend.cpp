@@ -95,6 +95,42 @@ void MsvcBackend::AddTaskInfo(std::span<Task> tasks) const
     }
 }
 
+void SafeCompleteCmd(std::string& cmd, std::vector<std::string>& cmds)
+{
+    auto build_dir = BuildDir;
+
+    size_t cmd_length = cmd.size();
+    for (auto& cmd_part : cmds) {
+        cmd_length += 1 + cmd_part.size();
+    }
+
+    constexpr uint32_t CmdSizeLimit = 8000;
+
+    if (cmd_length > CmdSizeLimit) {
+        static std::atomic_uint32_t cmd_file_id = 0;
+
+        auto cmd_dir = build_dir / "cmds";
+        fs::create_directories(cmd_dir);
+        auto cmd_path = cmd_dir / std::format("cmd.{}", cmd_file_id++);
+        std::ofstream out(cmd_path, std::ios::binary);
+        for (uint32_t i = 0; i < cmds.size(); ++i) {
+            if (i > 0) out.write("\n", 1);
+            out.write(cmds[i].data(), cmds[i].size());
+        }
+        out.flush();
+        out.close();
+
+        cmd += " @";
+        cmd += PathToCmdString(cmd_path);
+
+    } else {
+        for (auto& cmd_part : cmds) {
+            cmd += " ";
+            cmd += cmd_part;
+        }
+    }
+}
+
 bool MsvcBackend::CompileTask(const Task& task) const
 {
     auto build_dir = BuildDir;
@@ -113,7 +149,7 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     // cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
     cmds.emplace_back("/Zc:preprocessor /permissive-");
-    cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++latest -MT");
+    cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++latest -MD");
     // cmd += " /O2 /Ob3";
     // cmd += " /W4";
 
@@ -155,55 +191,64 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     // Generate cmd string, use command files to avoid cmd line size limit
 
-    {
-        size_t cmd_length = cmd.size();
-        for (auto& cmd_part : cmds) {
-            cmd_length += 1 + cmd_part.size();
-        }
-
-        constexpr uint32_t CmdSizeLimit = 8000;
-
-        if (cmd_length > CmdSizeLimit) {
-            static std::atomic_uint32_t cmd_file_id = 0;
-
-            auto cmd_dir = build_dir / "cmds";
-            fs::create_directories(cmd_dir);
-            auto cmd_path = cmd_dir / std::format("cmd.{}", cmd_file_id++);
-            std::ofstream out(cmd_path, std::ios::binary);
-            for (uint32_t i = 0; i < cmds.size(); ++i) {
-                if (i > 0) out.write("\n", 1);
-                out.write(cmds[i].data(), cmds[i].size());
-            }
-            out.flush();
-            out.close();
-
-            cmd += " @";
-            cmd += PathToCmdString(cmd_path);
-
-        } else {
-            for (auto& cmd_part : cmds) {
-                cmd += " ";
-                cmd += cmd_part;
-            }
-        }
-    }
+    SafeCompleteCmd(cmd, cmds);
 
     log_cmd(cmd);
 
     return std::system(cmd.c_str()) == 0;
 }
 
-void MsvcBackend::LinkStep(const Artifact& artifact, std::span<const Task> tasks) const
+void MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 {
     auto build_dir = BuildDir;
 
-    auto output_file = (build_dir / artifact.output).replace_extension(".exe");
+    auto& executable = target.executable.value();
 
-    auto cmd = std::format("cd /d {} && link /nologo /subsystem:console /OUT:{}", PathToCmdString(build_dir), PathToCmdString(output_file));
+    auto output_file = (executable.path).replace_extension(".exe");
+    fs::create_directories(output_file.parent_path());
+
+    // auto cmd = std::format("cd /d {} && link /nologo /subsystem:console /OUT:{}", PathToCmdString(build_dir), PathToCmdString(output_file));
+    auto cmd = std::format("cd /d {} && link /nologo", PathToCmdString(output_file.parent_path()));
+    std::vector<std::string> cmds;
+    switch (executable.type) {
+        break;case ExecutableType::Console: cmds.emplace_back("/subsystem:console");
+        break;case ExecutableType::Window: cmds.emplace_back("/subsystem:window");
+    }
+    cmds.emplace_back(std::format("/OUT:{}", output_file.filename().string()));
     for (auto& task : tasks) {
         if (task.is_header_unit) continue;
-        cmd += std::format(" {}", PathToCmdString(task.obj));
+        if (!target.flattened_imports.contains(task.target)) continue;
+        cmds.emplace_back(PathToCmdString(task.obj));
+    }
+    // TODO: Move this to shared logic!
+    auto AddLinks = [&](const Target& t) {
+        std::println("Adding links for: [{}]", t.name);
+        for (auto& link : t.links) {
+            if (fs::is_regular_file(link)) {
+                std::println("    adding: [{}]", link.string());
+                cmds.emplace_back(PathToCmdString(link));
+            } else if (fs::is_directory(link)) {
+                std::println("  finding links in: [{}]", link.string());
+                for (auto iter : fs::directory_iterator(link)) {
+                    auto path = iter.path();
+                    if (path.extension() == ".lib") {
+                        std::println("    adding: [{}]", path.string());
+                        cmds.emplace_back(PathToCmdString(path));
+                    }
+                }
+            } else {
+                std::println("[warn] link path not found: [{}]", link.string());
+            }
+        }
+    };
+    AddLinks(target);
+    for (auto* import_target : target.flattened_imports) {
+        AddLinks(*import_target);
     }
 
-    log_cmd(cmd);
+    SafeCompleteCmd(cmd, cmds);
+
+    std::println("[cmd] {}", cmd);
+
+    std::system(cmd.c_str());
 }

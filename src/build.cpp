@@ -21,7 +21,7 @@ void PrintStepHeader(std::string_view name)
     std::println("==== {} ====", name);
 }
 
-void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& backend)
+void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> targets, const Backend& backend)
 {
     fs::create_directories(BuildDir);
 
@@ -41,7 +41,7 @@ void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& back
 
         auto& p1689 = dependency_info[i];
 
-        auto* doc = yyjson_read(p1689.data(), p1689.size(), 0);
+        auto* doc = yyjson_read(p1689.data(), p1689.size(), YYJSON_READ_ALLOW_COMMENTS | YYJSON_READ_ALLOW_TRAILING_COMMAS);
         auto* root = yyjson_doc_get_root(doc);
 
         auto rule = yyjson_arr_get_first(yyjson_obj_get(root, "rules"));
@@ -416,18 +416,14 @@ void Build(std::vector<Task>& tasks, const Artifact* target, const Backend& back
 
     }
 
-    if (target && stats.compiled == stats.to_compile) {
+    if (stats.compiled == stats.to_compile) {
 
-        PrintStepHeader("Linking final object");
+        PrintStepHeader("Linking target executables");
 
-        backend.LinkStep(*target, tasks);
+        for (auto&[_, target] : targets) {
+            if (!target.executable) continue;
 
-        PrintStepHeader("Running output");
-
-        {
-            auto cmd = (BuildDir / target->output).string();
-            log_cmd(cmd);
-            std::system(cmd.c_str());
+            backend.LinkStep(target, tasks);
         }
     }
 }

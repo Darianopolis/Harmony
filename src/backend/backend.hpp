@@ -16,7 +16,7 @@ struct Backend {
     virtual void GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) const = 0;
     virtual void AddTaskInfo(std::span<Task> tasks) const = 0;
     virtual bool CompileTask(const Task& task) const = 0;
-    virtual void LinkStep(const Artifact& artifact, std::span<const Task> tasks) const = 0;
+    virtual void LinkStep(Target& target, std::span<const Task> tasks) const = 0;
 };
 
 inline

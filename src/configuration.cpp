@@ -11,22 +11,21 @@ import std.compat;
 #ifndef HARMONY_USE_IMPORT_STD
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #endif
 
-void ParseConfig(std::string_view input, std::vector<Task>& tasks)
+void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordered_map<std::string, Target>& out_targets)
 {
     std::println("Parsing config");
 
     uint32_t source_id = 0;
 
-    auto doc = yyjson_read(input.data(), input.size(), 0);
+    auto doc = yyjson_read(input.data(), input.size(), YYJSON_READ_ALLOW_COMMENTS | YYJSON_READ_ALLOW_TRAILING_COMMAS);
     auto root = yyjson_doc_get_root(doc);
 
     std::println("root = {}", (void*)root);
 
     auto deps_folder = fs::path(".deps");
-
-    std::unordered_map<std::string, Target> out_targets;
 
     for (auto in_target : yyjson_arr_range(yyjson_obj_get(root, "targets"))) {
         auto name = yyjson_get_str(yyjson_obj_get(in_target, "name"));
@@ -85,6 +84,23 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks)
         for (auto import : yyjson_arr_range(yyjson_obj_get(in_target, "import"))) {
             out_target.import.emplace_back(yyjson_get_str(import));
         }
+
+        for (auto link : yyjson_arr_range(yyjson_obj_get(in_target, "link"))) {
+            out_target.links.emplace_back(dir / yyjson_get_str(link));
+        }
+
+        if (auto executable = yyjson_obj_get(in_target, "executable")) {
+            out_target.executable.emplace(
+                yyjson_get_str(yyjson_obj_get(executable, "name")),
+                [&] {
+                    auto type_str = yyjson_get_str(yyjson_obj_get(executable, "type"));
+                    if (!type_str) error("Executable must specify type [console] or [window]");
+                    if ("console"sv == type_str) return ExecutableType::Console;
+                    if ("window"sv == type_str) return ExecutableType::Window;
+                    error(std::format("Unknown executable type: [{}]", type_str));
+                }()
+            );
+        }
     }
 
     std::println("Parsed json config, generating tasks");
@@ -113,7 +129,12 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks)
             std::println("  defines:  {}", define);
         }
 
-        [&](this auto&& self, const Target& cur) -> void {
+        std::unordered_set<Target*> flattened;
+
+        [&](this auto&& self, Target& cur) -> void {
+            if (flattened.contains(&cur)) return;
+            flattened.emplace(&cur);
+
             for (auto import_name : cur.import) {
                 std::println("  importing from [{}]", import_name);
                 try {
@@ -136,6 +157,8 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks)
             }
         }(target);
 
+        target.flattened_imports = std::move(flattened);
+
         for (auto& source : target.sources) {
             auto AddSourceFile = [&](const fs::path& file, SourceType type) {
                 auto ext = file.extension();
@@ -147,13 +170,14 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks)
                 if (type == SourceType::Unknown) return;
 
                 auto& task = tasks.emplace_back();
+                task.target = &target;
                 task.source = { file, type };
 
                 // TODO: We really don't want to duplicate this for every task
                 task.include_dirs = includes;
                 task.defines = defines;
 
-                task.unique_name = std::format("{}.{}", task.source.path.filename().replace_extension("").string(), source_id++);
+                task.unique_name = std::format("{}.{}.{}", target.name, task.source.path.filename().replace_extension("").string(), source_id++);
 
                 switch (task.source.type) {
                     break;case SourceType::CppSource:    std::println("C++ Source    - {}", task.source.path.string());
@@ -319,12 +343,8 @@ void Fetch(std::string_view config, bool clean)
                             cmd += std::format(" cd .deps/{}", name);
                             cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={0}/install -DCMAKE_BUILD_TYPE={1} -B {0}", cmake_build_dir, profile);
 
-                            if (auto options = yyjson_obj_get(cmake, "options")) {
-                                size_t idx2, max2;
-                                yyjson_val* option;
-                                yyjson_arr_foreach(options, idx2, max2, option) {
-                                    cmd += std::format(" -D{}", yyjson_get_str(option));
-                                }
+                            for (auto option : yyjson_arr_range(yyjson_obj_get(cmake, "options"))) {
+                                cmd += std::format(" -D{}", yyjson_get_str(option));
                             }
 
                             std::println("[cmd] {}", cmd);
@@ -335,7 +355,7 @@ void Fetch(std::string_view config, bool clean)
                     if (stage == stage_git_build) {
                         std::string cmd;
                         cmd += std::format(" cd .deps/{}", name);
-                        cmd += std::format(" && cmake --build {} --config {} --target install", cmake_build_dir, profile);
+                        cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", cmake_build_dir, profile);
 
                         std::println("[cmd] {}", cmd);
                         std::system(cmd.c_str());
