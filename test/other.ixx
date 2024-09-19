@@ -1,6 +1,10 @@
 export module other;
 
-import "thing.hpp";
+#ifdef HARMONY_BUILD
+import <thing.hpp>;
+#else
+#include "thing.hpp"
+#endif
 
 export const char* message()
 {

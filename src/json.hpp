@@ -119,7 +119,7 @@ struct JsonDocument
     JsonDocument(std::string_view json)
         : doc(yyjson_read(json.data(), json.size(), YYJSON_READ_ALLOW_COMMENTS | YYJSON_READ_ALLOW_TRAILING_COMMAS))
     {
-        if (!doc) error("Error parsing json");
+        if (!doc) Error("Error parsing json");
     }
 
     ~JsonDocument()

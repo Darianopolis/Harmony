@@ -7,11 +7,20 @@ import std.compat;
 #include <configuration.hpp>
 
 #include <backend/msvc/msvc-backend.hpp>
+#include <backend/clang/clangcl-backend.hpp>
 
 int main(int argc, char* argv[])
 {
+    auto start = chr::steady_clock::now();
+    HARMONY_DEFER(&) {
+        auto end = chr::steady_clock::now();
+        LogInfo("--------------------------------------------------------------------------------");
+        LogInfo("Elapsed: {}", DurationToString(end - start));
+    };
+
     auto PrintUsage = [] {
-        error("Usage: [build file] [-fetch] [-clean]");
+        LogDebug("Usage: [build file] [-fetch] [-clean]");
+        std::terminate();
     };
 
     if (argc < 2) {
@@ -24,12 +33,12 @@ int main(int argc, char* argv[])
              if ("-fetch"sv == argv[i]) fetch = true;
         else if ("-clean"sv == argv[i]) clean = true;
         else {
-            std::println("Unknown switch: {}", argv[i]);
+            LogError("Unknown switch: {}", argv[i]);
             PrintUsage();
         }
     }
 
-    auto config = read_file(argv[1]);
+    auto config = ReadFileToString(argv[1]);
 
     if (fetch) {
         Fetch(config, clean);
@@ -39,6 +48,6 @@ int main(int argc, char* argv[])
     std::vector<Task> tasks;
     ParseConfig(config, tasks, targets);
 
-    MsvcBackend msvc;
-    Build(tasks, targets, msvc);
+    MsvcBackend backend;
+    Build(tasks, targets, backend);
 }

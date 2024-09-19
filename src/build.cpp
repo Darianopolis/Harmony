@@ -16,28 +16,23 @@ import std.compat;
 
 #include <json.hpp>
 
-void PrintStepHeader(std::string_view name)
-{
-    std::println("==== {} ====", name);
-}
-
-void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> targets, const Backend& backend)
+void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& targets, const Backend& backend)
 {
     fs::create_directories(BuildDir);
 
-    PrintStepHeader("Getting dependency info");
+    LogDebug("Getting dependency info");
 
     std::vector<std::string> dependency_info;
     backend.FindDependencies(tasks, dependency_info);
 
     std::unordered_map<fs::path, std::string> marked_header_units;
 
-    PrintStepHeader("Parsing dependency P1689.json");
+    LogDebug("Parsing dependency P1689.json");
 
     for (int i = 0; i < tasks.size(); ++i) {
         auto& task = tasks[i];
 
-        std::println("Dependency info for [{}]:", task.source.path.string());
+        LogTrace("Dependency info for [{}]:", task.source.path.string());
 
         auto& p1689 = dependency_info[i];
 
@@ -48,53 +43,62 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
 
             for (auto provided : rule["provides"]) {
                 auto logical_name = provided["logical-name"].string();
-                std::println("  provides: {}", logical_name);
+                LogTrace("  provides: {}", logical_name);
                 task.produces.emplace_back(logical_name);
             }
 
             for (auto required : rule["requires"]) {
                 auto logical_name = required["logical-name"].string();
-                std::println("  requires: {}", logical_name);
+                LogTrace("  requires: {}", logical_name);
                 task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
                 if (auto source_path = required["source-path"]) {
                     auto path = fs::path(source_path.string());
-                    std::println("    is header unit - {}", path.string());
+                    LogTrace("    is header unit - {}", path.string());
                     marked_header_units[path] = logical_name;
                 }
             }
         }
     }
 
-    PrintStepHeader("Defining std modules");
+    LogDebug("Defining std modules");
 
+    Target std_target;
+    std_target.name = "std";
     {
         std::optional<Task> std_task, std_compat_task;
         for (auto& task : tasks) {
             for (auto& depends_on : task.depends_on) {
-                if (!std_task && depends_on.name == "std") {
-                    std::println("Detected usage of [std] module");
-                    std_task = Task {
-                        .source{.type = SourceType::CppInterface},
-                        .unique_name = "std",
-                        .produces = { "std" },
-                        .external = true,
-                    };
+                if (depends_on.name == "std") {
+                    if (!std_task) {
+                        LogInfo("Detected usage of [std] module");
+                        std_task = Task {
+                            .target = &std_target,
+                            .source{.type = SourceType::CppInterface},
+                            .unique_name = "std",
+                            .produces = { "std" },
+                            .external = true,
+                        };
+                    }
+
+                    task.target->flattened_imports.emplace(&std_target);
                 }
 
-                if (!std_compat_task && depends_on.name == "std.compat") {
-                    std::println("Detected usage of [std.compat] module");
-                    std_compat_task = Task {
-                        .source{.type = SourceType::CppInterface},
-                        .unique_name = "std.compat",
-                        .produces = { "std.compat" },
-                        .depends_on = { {"std"} },
-                        .external = true,
-                    };
-                }
+                if (depends_on.name == "std.compat") {
+                    if (!std_compat_task) {
+                        LogInfo("Detected usage of [std.compat] module");
+                        std_compat_task = Task {
+                            .target = &std_target,
+                            .source{.type = SourceType::CppInterface},
+                            .unique_name = "std.compat",
+                            .produces = { "std.compat" },
+                            .depends_on = { {"std"} },
+                            .external = true,
+                        };
+                    }
 
-                if (std_task && std_compat_task) break;
+                    task.target->flattened_imports.emplace(&std_target);
+                }
             }
-            if (std_task && std_compat_task) break;
         }
 
         backend.GenerateStdModuleTasks(
@@ -104,7 +108,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         if (std_compat_task) tasks.emplace_back(std::move(*std_compat_task));
     }
 
-    PrintStepHeader("Marking header units");
+    LogDebug("Marking header units");
 
     for (auto& task : tasks) {
         auto path = fs::absolute(task.source.path);
@@ -113,17 +117,17 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         task.is_header_unit = true;
         task.produces.emplace_back(iter->second);
 
-        std::println("task[{}].is_header_unit = {}", task.source.path.string(), task.is_header_unit);
+        LogTrace("task[{}].is_header_unit = {}", task.source.path.string(), task.is_header_unit);
 
         marked_header_units.erase(path);
     }
 
-    PrintStepHeader("Generating external header unit tasks");
+    LogDebug("Generating external header unit tasks");
 
     {
         uint32_t ext_header_uid = 0;
         for (auto[path, logical_name] : marked_header_units) {
-            std::println("external header unit[{}] -> {}", path.string(), logical_name);
+            LogTrace("external header unit[{}] -> {}", path.string(), logical_name);
 
             auto& task = tasks.emplace_back();
             task.source.path = path;
@@ -135,17 +139,17 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         }
     }
 
-    PrintStepHeader("Trimming normal header tasks");
+    LogDebug("Trimming normal header tasks");
 
     std::erase_if(tasks, [](const auto& task) {
         if (!task.is_header_unit && task.source.type == SourceType::CppHeader) {
-            std::println("Header [{}] is not consumed as a header unit", task.unique_name);
+            LogTrace("Header [{}] is not consumed as a header unit", task.unique_name);
             return true;
         }
         return false;
     });
 
-    PrintStepHeader("Resolving dependencies");
+    LogDebug("Resolving dependencies");
 
     {
         auto FindTaskForProduced = [&](std::string_view name) -> Task* {
@@ -161,7 +165,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
             for (auto& depends_on : task.depends_on) {
                 auto* depends_on_task = FindTaskForProduced(depends_on.name);
                 if (!depends_on_task) {
-                    error(std::format("No task provides [{}] required by [{}]", depends_on.name, task.unique_name));
+                    Error(std::format("No task provides [{}] required by [{}]", depends_on.name, task.unique_name));
                 }
                 depends_on.source = depends_on_task;
             }
@@ -170,7 +174,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
 
     bool compute_dependency_stats = true;
     if (compute_dependency_stats) {
-        PrintStepHeader("Calculating dependency stats");
+        LogDebug("Calculating dependency stats");
 
         std::unordered_map<const void*, uint32_t> cache;
         auto FindMaxDepth = [&](this auto&& self, const Task& task) {
@@ -197,7 +201,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
 
         uint32_t i = 0;
         auto ReadMaxDepthChain = [&](this auto&& self, const Task& task) -> void {
-            std::println("[{}] = {}", i++, task.source.path.string());
+            LogTrace("[{}] = {}", i++, task.source.path.string());
 
             uint32_t max_depth = 0;
             const Task* max_task = nullptr;
@@ -225,20 +229,20 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
                 }
             }
 
-            std::println("Maximum task depth = {}", max_depth);
+            LogDebug("Maximum task depth = {}", max_depth);
             ReadMaxDepthChain(*max_task);
         }
     }
 
-    PrintStepHeader("Filling in backend task info");
+    LogDebug("Filling in backend task info");
 
     backend.AddTaskInfo(tasks);
 
-    PrintStepHeader("Validating dependencies");
+    LogDebug("Validating dependencies");
 
     // TODO: Check for illegal cycles (both in modules and includes)
 
-    PrintStepHeader("Filtering up-to-date tasks");
+    LogDebug("Filtering up-to-date tasks");
 
     // Filter on immediate file changes
 
@@ -291,7 +295,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
 
     // TODO: Filter on included header changes
 
-    PrintStepHeader("Executing build steps");
+    LogDebug("Executing build steps");
 
     struct CompileStats {
         uint32_t to_compile = 0;
@@ -306,9 +310,14 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         else if (task.state == TaskState::Waiting) stats.to_compile++;
     }
 
-    std::println("Compiling {} files ({} up to date)", stats.to_compile, stats.skipped);
+    // if (true) {
+    //     backend.GenerateCompileCommands(tasks);
+    //     return;
+    // }
 
-    auto start = std::chrono::steady_clock::now();
+    LogInfo("Compiling {} files ({} up to date)", stats.to_compile, stats.skipped);
+
+    auto start = chr::steady_clock::now();
 
     bool mt_compile = true;
     {
@@ -316,6 +325,8 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         std::atomic_uint32_t num_started = 0;
         std::atomic_uint32_t num_complete = 0;
         uint32_t last_num_complete = 0;
+
+        // bool abort = false;
 
         for (;;) {
             uint32_t remaining = 0;
@@ -355,15 +366,27 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
 
                     num_complete++;
                     num_complete.notify_all();
+
+                    return success;
                 };
 
                 if (mt_compile) {
                     std::thread t{DoCompile};
                     t.detach();
                 } else {
-                    DoCompile();
+                    [[maybe_unused]] auto success = DoCompile();
+                    // if (success) break;
+                    // if (!success) {
+                    //     log_error("Ending compilation early after error");
+                    //     abort = true;
+                    //     break;
+                    // }
                 }
             }
+
+            // if (abort) {
+            //     break;
+            // }
 
             if (remaining
                     && _num_started == _num_complete
@@ -373,17 +396,17 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
                     if (task.state == TaskState::Failed) num_errors++;
                 }
                 if (num_errors) {
-                    std::println("Blocked after {} failed compilations", num_errors);
+                    LogError("Blocked after {} failed compilations", num_errors);
                     break;
                 }
 
-                std::println("Unable to start any additional tasks");
+                LogError("Unable to start any additional tasks");
                 for (auto& task : tasks) {
                     if (task.state == TaskState::Complete) continue;
-                    std::println("task[{}] blocked", task.source.path.string());
+                    LogError("task[{}] blocked", task.source.path.string());
                     for (auto& dep : task.depends_on) {
                         if (dep.source->state == TaskState::Complete) continue;
-                        std::println(" - {}{}", dep.name, dep.source->state == TaskState::Failed ? " (failed)" : "");
+                        LogError(" - {}{}", dep.name, dep.source->state == TaskState::Failed ? " (failed)" : "");
                     }
                 }
                 break;
@@ -395,9 +418,9 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         }
     }
 
-    auto end = std::chrono::steady_clock::now();
+    auto end = chr::steady_clock::now();
 
-    PrintStepHeader("Reporting Build Stats");
+    LogInfo("Reporting Build Stats");
 
     {
         uint32_t num_complete = 0;
@@ -407,17 +430,20 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target> tar
         }
         stats.compiled = num_complete - stats.skipped;
 
-        std::println("Compiled = {} / {}", stats.compiled, stats.to_compile);
-        if (stats.skipped) std::println("  Skipped = {}", stats.skipped);
-        if (stats.failed)  std::println("  Failed  = {}", stats.failed);
-        if (stats.compiled < stats.to_compile) std::println("  Blocked = {}", stats.to_compile - (stats.compiled + stats.failed));
-        std::println("Elapsed  = {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+        if (stats.skipped) {
+            LogInfo("Compiled = {} / {} ({} skipped)", stats.compiled, stats.to_compile, stats.skipped);
+        } else {
+            LogInfo("Compiled = {} / {}", stats.compiled, stats.to_compile);
+        }
+        if (stats.failed)  LogWarn("  Failed  = {}", stats.failed);
+        if (stats.compiled < stats.to_compile) LogWarn("  Blocked = {}", stats.to_compile - (stats.compiled + stats.failed));
+        LogInfo("Elapsed  = {}", DurationToString(end - start));
 
     }
 
     if (stats.compiled == stats.to_compile) {
 
-        PrintStepHeader("Linking target executables");
+        LogInfo("Linking target executables");
 
         for (auto&[_, target] : targets) {
             if (!target.executable) continue;

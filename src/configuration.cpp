@@ -16,7 +16,7 @@ import std.compat;
 
 void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordered_map<std::string, Target>& out_targets)
 {
-    std::println("Parsing config");
+    LogInfo("Parsing config");
 
     uint32_t source_id = 0;
 
@@ -25,38 +25,38 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
 
     for (auto in_target :  doc.root()["targets"]) {
         auto name = in_target["name"].string();
-        std::println("name = {}", (bool)name);
+        LogTrace("name = {}", (bool)name);
         auto dir = deps_folder / name;
         if (auto dir_str = in_target["dir"].string()) {
-            std::println("Custom dir path: {}", dir_str);
+            LogTrace("Custom dir path: {}", dir_str);
             dir = dir_str;
         }
 
-        std::println("target[{}]", name);
-        std::println("  dir = {}", dir.string());
+        LogTrace("target[{}]", name);
+        LogTrace("  dir = {}", dir.string());
 
         auto& out_target = out_targets[name];
         out_target.name = name;
 
         for (auto source : in_target["sources"]) {
             if (source.obj()) {
-                std::println("  sources(type = {})", source["type"].string());
+                LogTrace("  sources(type = {})", source["type"].string());
 
                 auto type = [&] {
                     auto type_str = source["type"].string();
-                    if (!type_str) error("Source object must contain 'type'");
+                    if (!type_str) Error("Source object must contain 'type'");
                     if ("c++"sv == type_str) return SourceType::CppSource;
                     if ("c++header"sv == type_str) return SourceType::CppHeader;
                     if ("c++interface"sv == type_str) return SourceType::CppInterface;
-                    error(std::format("Unknown source type: [{}]", type_str));
+                    Error(std::format("Unknown source type: [{}]", type_str));
                 }();
 
                 for (auto file : source["paths"]) {
-                    std::println("    {}", file.string());
+                    LogTrace("    {}", file.string());
                     out_target.sources.emplace_back(dir / file.string(), type);
                 }
             } else {
-                std::println("  source: {}", source.string());
+                LogTrace("  source: {}", source.string());
                 out_target.sources.emplace_back(dir / source.string(), SourceType::Unknown);
             }
         }
@@ -91,22 +91,25 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
                 executable["name"].string(),
                 [&] {
                     auto type_str = executable["type"].string();
-                    if (!type_str) error("Executable must specify type [console] or [window]");
+                    if (!type_str) Error("Executable must specify type [console] or [window]");
                     if ("console"sv == type_str) return ExecutableType::Console;
                     if ("window"sv == type_str) return ExecutableType::Window;
-                    error(std::format("Unknown executable type: [{}]", type_str));
+                    Error(std::format("Unknown executable type: [{}]", type_str));
                 }()
             );
         }
     }
 
-    std::println("Parsed json config, generating tasks");
+    LogInfo("Parsed json config, generating tasks");
 
-    for (auto&[name, target] : out_targets) {
+    // for (auto&[name, target] : out_targets) {
+    for (auto in_target :  doc.root()["targets"]) {
+        auto name = in_target["name"].string();
+        auto& target = out_targets.at(name);
 
         if (target.sources.empty()) continue;
 
-        std::println("====");
+        LogTrace("====");
 
         std::vector<fs::path> includes;
         std::vector<std::string> defines;
@@ -119,11 +122,11 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
         }
 
         for (auto& include : includes) {
-            std::println("  includes: {}", include.string());
+            LogTrace("  includes: {}", include.string());
         }
 
         for (auto& define : defines) {
-            std::println("  defines:  {}", define);
+            LogTrace("  defines:  {}", define);
         }
 
         std::unordered_set<Target*> flattened;
@@ -133,23 +136,23 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
             flattened.emplace(&cur);
 
             for (auto import_name : cur.import) {
-                std::println("  importing from [{}]", import_name);
+                LogTrace("  importing from [{}]", import_name);
                 try {
                     auto& imported = out_targets.at(import_name);
 
                     for (auto& include_dir : imported.include_dirs) {
-                        std::println("    includes: {}", include_dir.string());
+                        LogTrace("    includes: {}", include_dir.string());
                         includes.emplace_back(include_dir);
                     }
 
                     for (auto& define : imported.define_import) {
-                        std::println("    defines:  {}", define);
+                        LogTrace("    defines:  {}", define);
                         defines.emplace_back(define);
                     }
 
                     self(imported);
                 } catch (std::exception& e) {
-                    error(e.what());
+                    Error(e.what());
                 }
             }
         }(target);
@@ -178,14 +181,14 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
                 task.unique_name = std::format("{}.{}.{}", target.name, task.source.path.filename().replace_extension("").string(), source_id++);
 
                 switch (task.source.type) {
-                    break;case SourceType::CppSource:    std::println("C++ Source    - {}", task.source.path.string());
-                    break;case SourceType::CppHeader:    std::println("C++ Header    - {}", task.source.path.string());
-                    break;case SourceType::CppInterface: std::println("C++ Interface - {}", task.source.path.string());
+                    break;case SourceType::CppSource:    LogTrace("C++ Source    - {}", task.source.path.string());
+                    break;case SourceType::CppHeader:    LogTrace("C++ Header    - {}", task.source.path.string());
+                    break;case SourceType::CppInterface: LogTrace("C++ Interface - {}", task.source.path.string());
                 }
             };
 
             if (fs::is_directory(source.path)) {
-                std::println("  scanning for source in: [{}]", source.path.string());
+                LogTrace("  scanning for source in: [{}]", source.path.string());
                 for (auto file : fs::recursive_directory_iterator(source.path,
                         fs::directory_options::follow_directory_symlink |
                         fs::directory_options::skip_permission_denied)) {
@@ -195,7 +198,7 @@ void ParseConfig(std::string_view input, std::vector<Task>& tasks, std::unordere
             } else if (fs::is_regular_file(source.path)) {
                 AddSourceFile(source.path, source.type);
             } else {
-                std::println("Source path [{}] not dir or file", source.path.string());
+                LogTrace("Source path [{}] not dir or file", source.path.string());
             }
         }
     }
@@ -212,26 +215,20 @@ void Fetch(std::string_view config, bool clean)
     auto deps_folder = fs::path(".deps");
     fs::create_directories(deps_folder);
 
-    curl_global_init(CURL_GLOBAL_ALL);
+    JsonDocument doc(config);
 
     constexpr uint32_t stage_fetch = 0;
     constexpr uint32_t stage_unpack = 1;
     constexpr uint32_t stage_git_prepare = 2;
     constexpr uint32_t stage_git_build = 3;
 
-    JsonDocument doc(config);
     for (uint32_t stage = 0; stage < 4; ++stage) {
 
-        // phase 0 - git fetch/pull + download
-        // phase 1 - unzip
-        // phase 3 - git -B
-        // phase 4 - git --build
-
         switch (stage) {
-            break;case stage_fetch:       std::println("stage: fetch");
-            break;case stage_unpack:      std::println("stage: unpack");
-            break;case stage_git_prepare: std::println("stage: git prepare");
-            break;case stage_git_build:   std::println("stag: git build");
+            break;case stage_fetch:       LogDebug("Stage: fetch");
+            break;case stage_unpack:      LogDebug("Stage: unpack");
+            break;case stage_git_prepare: LogDebug("Stage: git prepare");
+            break;case stage_git_build:   LogDebug("Stag: git build");
         }
 
         std::vector<std::jthread> tasks;
@@ -240,7 +237,7 @@ void Fetch(std::string_view config, bool clean)
             auto name = target["name"].string();
             auto dir = deps_folder / name;
 
-            tasks.emplace_back([=] {
+            // tasks.emplace_back([=] {
 
                 if (auto _git = target["git"]) {
                     if (stage == stage_fetch) {
@@ -255,6 +252,8 @@ void Fetch(std::string_view config, bool clean)
                         }
 
                         if (fs::exists(dir)) {
+                            LogDebug("Checking for git updates in [{}]", dir.string());
+
                             std::string cmd;
                             cmd += std::format("cd {}", dir.string());
                             if (branch) {
@@ -265,10 +264,12 @@ void Fetch(std::string_view config, bool clean)
                             }
                             cmd += " && git pull";
 
-                            log_cmd(cmd);
+                            LogCmd(cmd);
 
                             std::system(cmd.c_str());
                         } else {
+                            LogDebug("Cloning into [{}]", dir.string());
+
                             std::string cmd;
                             cmd += std::format("git clone {} --depth=1 --recursive", url);
                             if (branch) {
@@ -276,7 +277,7 @@ void Fetch(std::string_view config, bool clean)
                             }
                             cmd += std::format(" .deps/{}", name);
 
-                            log_cmd(cmd);
+                            LogCmd(cmd);
 
                             std::system(cmd.c_str());
                         }
@@ -289,8 +290,12 @@ void Fetch(std::string_view config, bool clean)
                     auto tmp_file = dir.string() + ".tmp";
 
                     if (!fs::exists(dir) || clean) {
+                        LogInfo("Downloading [{}.tmp] <- [{}]", dir.string(), url);
 
                         if (stage == stage_fetch) {
+                            HARMONY_DO_ONCE() { curl_global_init(CURL_GLOBAL_ALL); };
+                            HARMONY_ON_EXIT() { curl_global_cleanup(); };
+
                             auto curl = curl_easy_init();
 
                             curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -310,11 +315,13 @@ void Fetch(std::string_view config, bool clean)
                         }
 
                         if (stage == stage_unpack) {
+                            LogInfo("Unpacking [{0}] <- [{0}.tmp]", dir.string());
+
                             if (type && "zip"sv == type) {
                                 std::string cmd;
                                 cmd += std::format(" cd .deps && 7z x -y {0}.tmp -o{0}", name);
 
-                                log_cmd(cmd);
+                                LogCmd(cmd);
                                 std::system(cmd.c_str());
                             }
 
@@ -333,6 +340,8 @@ void Fetch(std::string_view config, bool clean)
                     if (stage == stage_git_prepare) {
                         // TODO: Check for for successful completion of cmake configure instead of fs::exists
                         if (!fs::exists(dir / cmake_build_dir) || clean) {
+                            LogInfo("Configuring CMake build in [{}]", dir.string());
+
                             std::string cmd;
                             cmd += std::format(" cd .deps/{}", name);
                             cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={0}/install -DCMAKE_BUILD_TYPE={1} -B {0}", cmake_build_dir, profile);
@@ -341,25 +350,25 @@ void Fetch(std::string_view config, bool clean)
                                 cmd += std::format(" -D{}", option.string());
                             }
 
-                            log_cmd(cmd);
+                            LogCmd(cmd);
                             std::system(cmd.c_str());
                         }
                     }
 
                     if (stage == stage_git_build) {
+                        LogInfo("Running CMake build in [{}]", dir.string());
+
                         std::string cmd;
                         cmd += std::format(" cd .deps/{}", name);
                         cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", cmake_build_dir, profile);
 
-                        log_cmd(cmd);
+                        LogCmd(cmd);
                         std::system(cmd.c_str());
                     }
                 }
-            });
+            // });
         }
     }
 
-    std::println("==== Complete ====");
-
-    curl_global_cleanup();
+    LogInfo("==== Complete ====");
 }

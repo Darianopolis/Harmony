@@ -3,6 +3,6 @@
 .vscode/
 .deps/
 out/
-compile_commands.json
-harmony.build.jsonc
+*compile_commands.json*
+*.build.jsonc
 NOTES.local.txt

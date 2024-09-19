@@ -17,14 +17,10 @@ import std.compat;
 
 MsvcBackend::~MsvcBackend() = default;
 
-std::string PathToCmdString(const fs::path path)
+static
+auto PathToCmdString(const fs::path& path)
 {
-    auto str = fs::absolute(path).string();
-    std::ranges::transform(str, str.begin(), [](char c) {
-        if (c == '/') return '\\';
-        return c;
-    });
-    return std::format("\"{}\"", str);
+    return FormatPath(path, PathFormatOptions::Backward | PathFormatOptions::QuoteSpaces | PathFormatOptions::Absolute);
 }
 
 void MsvcBackend::FindDependencies(std::span<const Task> tasks, std::vector<std::string>& dependency_info_p1689_json) const
@@ -49,7 +45,7 @@ void MsvcBackend::FindDependencies(std::span<const Task> tasks, std::vector<std:
             cmd += std::format(" /D{}", define);
         }
 
-        log_cmd(cmd);
+        LogCmd(cmd);
         std::system(cmd.c_str());
         {
             std::ifstream file(output_location, std::ios::binary);
@@ -68,10 +64,10 @@ void MsvcBackend::GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) 
     auto module_file = tools_dir / "modules/std.ixx";
 
     if (!fs::exists(module_file)) {
-        error("std.ixx not found. Please install the C++ Modules component for Visual Studio");
+        Error("std.ixx not found. Please install the C++ Modules component for Visual Studio");
     }
 
-    std::println("std module path: {}", module_file.string());
+    LogDebug("std module path: {}", module_file.string());
 
     if (std_task) {
         std_task->source.path = module_file;
@@ -95,6 +91,7 @@ void MsvcBackend::AddTaskInfo(std::span<Task> tasks) const
     }
 }
 
+static
 void SafeCompleteCmd(std::string& cmd, std::vector<std::string>& cmds)
 {
     auto build_dir = BuildDir;
@@ -146,10 +143,10 @@ bool MsvcBackend::CompileTask(const Task& task) const
         break;case SourceType::CppHeader: {
             if (task.is_header_unit) {
                 cmds.emplace_back(std::format("/exportHeader /TP {}", PathToCmdString(task.source.path)));
-            } else error("Attempted to compile header that isn't being exported as a header unit");
+            } else Error("Attempted to compile header that isn't being exported as a header unit");
         }
         break;case SourceType::CppInterface: cmds.emplace_back(std::format("/interface /TP {}", PathToCmdString(task.source.path)));
-        break;default: error("Cannot compile: unknown source type!");
+        break;default: Error("Cannot compile: unknown source type!");
     }
 
     // cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
@@ -158,16 +155,14 @@ bool MsvcBackend::CompileTask(const Task& task) const
     // cmd += " /O2 /Ob3";
     // cmd += " /W4";
 
+    // cmds.emplace_back("/FORCE /IGNORE:4006"); // When linking results from clang-cl that consume import std;
+
     for (auto& include_dir : task.include_dirs) {
         cmds.emplace_back(std::format("/I{}", PathToCmdString(include_dir)));
     }
 
     for (auto& define : task.defines) {
         cmds.emplace_back(std::format("/D{}", define));
-    }
-
-    if (task.is_header_unit) {
-        cmds.emplace_back(std::format("/exportHeader"));
     }
 
     // TODO: FIXME - Should this be handled by shared build logic?
@@ -198,7 +193,7 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     SafeCompleteCmd(cmd, cmds);
 
-    log_cmd(cmd);
+    LogCmd(cmd);
 
     return std::system(cmd.c_str()) == 0;
 }
@@ -225,24 +220,25 @@ void MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
         if (!target.flattened_imports.contains(task.target)) continue;
         cmds.emplace_back(PathToCmdString(task.obj));
     }
+
     // TODO: Move this to shared logic!
     auto AddLinks = [&](const Target& t) {
-        std::println("Adding links for: [{}]", t.name);
+        LogTrace("Adding links for: [{}]", t.name);
         for (auto& link : t.links) {
             if (fs::is_regular_file(link)) {
-                std::println("    adding: [{}]", link.string());
+                LogTrace("    adding: [{}]", link.string());
                 cmds.emplace_back(PathToCmdString(link));
             } else if (fs::is_directory(link)) {
-                std::println("  finding links in: [{}]", link.string());
+                LogTrace("  finding links in: [{}]", link.string());
                 for (auto iter : fs::directory_iterator(link)) {
                     auto path = iter.path();
                     if (path.extension() == ".lib") {
-                        std::println("    adding: [{}]", path.string());
+                        LogTrace("    adding: [{}]", path.string());
                         cmds.emplace_back(PathToCmdString(path));
                     }
                 }
             } else {
-                std::println("[warn] link path not found: [{}]", link.string());
+                LogWarn("link path not found: [{}]", link.string());
             }
         }
     };
@@ -253,7 +249,7 @@ void MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 
     SafeCompleteCmd(cmd, cmds);
 
-    log_cmd(cmd);
+    LogCmd(cmd);
 
     std::system(cmd.c_str());
 }
