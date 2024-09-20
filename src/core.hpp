@@ -5,6 +5,7 @@
 #include <print>
 #include <string_view>
 #include <fstream>
+#include <source_location>
 #endif
 
 #include <log.hpp>
@@ -119,11 +120,13 @@ void LogCmd(std::string_view cmd)
     }
 }
 
+struct HarmonySilentException {};
+
 [[noreturn]] inline
 void Error(std::string_view message)
 {
     LogError("{}", message);
-    std::terminate();
+    throw HarmonySilentException{};
 }
 
 // -----------------------------------------------------------------------------
@@ -170,11 +173,11 @@ std::string FormatPath(const fs::path& path, PathFormatOptions opts = PathFormat
     // Absolute / canonical conversions
 
     if (opts >= PathFormatOptions::Canonical) {
-        FormatPath_(fs::canonical(path), opts);
+        return FormatPath_(fs::canonical(path), opts);
     } else if (opts >= PathFormatOptions::Absolute) {
-        FormatPath_(fs::absolute(path), opts);
+        return FormatPath_(fs::absolute(path), opts);
     } else {
-        FormatPath_(path, opts);
+        return FormatPath_(path, opts);
     }
 }
 

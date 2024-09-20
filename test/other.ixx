@@ -1,7 +1,7 @@
 export module other;
 
 #ifdef HARMONY_BUILD
-import <thing.hpp>;
+export import <thing.hpp>;
 #else
 #include "thing.hpp"
 #endif

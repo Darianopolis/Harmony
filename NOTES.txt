@@ -23,3 +23,34 @@ MSBuild Generation
 Removing responsibility from toolchain backends
 
 - Backends should generate compile commands instead of executing commands directly
+
+Build Process
+
+  Represent all build operations as tasks in a DAG
+
+  Task types:
+    Source Generation
+    Compilation
+    Linking
+    Copy
+
+  Cache as much information as possible to speed up project scanning
+
+  Parse build configuration files
+  Expand build configurations
+    Generate source lists
+  Compute dependency information
+  Sort tasks
+  Execute
+
+Dependency tracking
+
+  Scan all sources
+  Find includes
+  If include is "external" then
+    only update if includes files related target is updated/rebuilt
+  Else
+    propogate updates from include
+
+  To reuse vendor dependency parsing (instead of implementing full preprocessor):
+    Generate outputs with preprocessor+import *only* for all tracked sources

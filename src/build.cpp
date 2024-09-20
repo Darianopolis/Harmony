@@ -22,41 +22,108 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     LogDebug("Getting dependency info");
 
-    std::vector<std::string> dependency_info;
-    backend.FindDependencies(tasks, dependency_info);
-
     std::unordered_map<fs::path, std::string> marked_header_units;
 
-    LogDebug("Parsing dependency P1689.json");
+    bool use_backend_dependency_scan = false;
+    auto backend_scan_differences = 0;
 
-    for (int i = 0; i < tasks.size(); ++i) {
-        auto& task = tasks[i];
+    std::vector<std::string> dependency_info;
+    if (use_backend_dependency_scan) {
+        backend.FindDependencies(tasks, dependency_info);
+    }
 
-        LogTrace("Dependency info for [{}]:", task.source.path.string());
+    {
+        std::string data;
+        std::unordered_map<std::string, int> produced_set;
+        std::unordered_map<std::string, int> required_set;
+        for (auto i = 0; i < tasks.size(); ++i) {
+            auto& task = tasks[i];
+            LogDebug("Scanning file: [{}]", task.source.path.string());
 
-        auto& p1689 = dependency_info[i];
+            if (use_backend_dependency_scan) {
+                produced_set.clear();
+                required_set.clear();
 
-        JsonDocument doc(p1689);
-        for (auto rule : doc.root()["rules"]) {
+                LogDebug("  Backend results:");
 
-            rule[0];
+                JsonDocument doc(dependency_info[i]);
+                for (auto rule : doc.root()["rules"]) {
+                    for (auto provided : rule["provides"]) {
+                        auto logical_name = provided["logical-name"].string();
+                        produced_set[logical_name]++;
+                        LogTrace("produces module [{}]", logical_name);
+                        task.produces.emplace_back(logical_name);
+                    }
 
-            for (auto provided : rule["provides"]) {
-                auto logical_name = provided["logical-name"].string();
-                LogTrace("  provides: {}", logical_name);
-                task.produces.emplace_back(logical_name);
-            }
-
-            for (auto required : rule["requires"]) {
-                auto logical_name = required["logical-name"].string();
-                LogTrace("  requires: {}", logical_name);
-                task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
-                if (auto source_path = required["source-path"]) {
-                    auto path = fs::path(source_path.string());
-                    LogTrace("    is header unit - {}", path.string());
-                    marked_header_units[path] = logical_name;
+                    for (auto required : rule["requires"]) {
+                        auto logical_name = required["logical-name"].string();
+                        required_set[logical_name]++;
+                        // LogTrace("  requires: {}", logical_name);
+                        task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
+                        if (auto source_path = required["source-path"]) {
+                            auto path = fs::path(source_path.string());
+                            // LogTrace("    is header unit - {}", path.string());
+                            marked_header_units[path] = logical_name;
+                            LogTrace("requires header [{}]", path.string());
+                        } else {
+                            LogTrace("requires module [{}]", logical_name);
+                        }
+                    }
                 }
             }
+
+            LogDebug("  build-deps results:");
+
+            {
+                std::ifstream in(task.source.path, std::ios::binary | std::ios::ate);
+                auto size = fs::file_size(task.source.path);
+                in.seekg(0);
+                data.resize(size + 16, '\0');
+                in.read(data.data(), size);
+                std::memset(data.data() + size, '\n', 16);
+            }
+
+            ScanFile(task.source.path, data, [&](Component& comp) {
+                if (!comp.imported && comp.exported) {
+                    if (use_backend_dependency_scan) {
+                        produced_set[comp.name]--;
+                    } else {
+                        task.produces.emplace_back(std::move(comp.name));
+                    }
+                } else {
+                    if (use_backend_dependency_scan) {
+                        required_set[comp.name]--;
+                    } else {
+                        task.depends_on.emplace_back(Dependency{.name = std::move(comp.name)});
+                    }
+                }
+            });
+
+            if (use_backend_dependency_scan) {
+                for (auto&[r, s] : produced_set) {
+                    if (s > 0) {
+                        backend_scan_differences++;
+                        LogError("MSVC produces [{}] not found by build-scan", r);
+                    } else if (s < 0) {
+                        backend_scan_differences++;
+                        LogError("Found produces [{}] not present in MSVC output", r);
+                    }
+                }
+
+                for (auto&[p, s] : required_set) {
+                    if (s > 0) {
+                        backend_scan_differences++;
+                        LogError("MSVC requires [{}] not found by build-scan", p);
+                    } else if (s < 0) {
+                        backend_scan_differences++;
+                        LogError("build-scan requires [{}] not present in MSVC output", p);
+                    }
+                }
+            }
+        }
+
+        if (backend_scan_differences) {
+            Error("Discrepancy between backend and build-scan outputs, aborting compilation");
         }
     }
 
@@ -249,6 +316,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
     for (auto& task : tasks) {
         // TODO: Filter for *all* tasks unless -clean specified
         // if (!task.external) continue;
+        // if (task.target->name == "panta-rhei" || task.target->name == "propolis") continue;
 
         if (task.is_header_unit) {
             if (!fs::exists(task.bmi) || fs::last_write_time(task.source.path) > fs::last_write_time(task.bmi)) {

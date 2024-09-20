@@ -9,7 +9,7 @@ import std.compat;
 #include <backend/msvc/msvc-backend.hpp>
 #include <backend/clang/clangcl-backend.hpp>
 
-int main(int argc, char* argv[])
+int main(int argc, char* argv[]) try
 {
     auto start = chr::steady_clock::now();
     HARMONY_DEFER(&) {
@@ -18,9 +18,9 @@ int main(int argc, char* argv[])
         LogInfo("Elapsed: {}", DurationToString(end - start));
     };
 
-    auto PrintUsage = [] {
-        LogDebug("Usage: [build file] [-fetch] [-clean]");
-        std::terminate();
+    auto PrintUsage = []() {
+        LogInfo("Usage: [build file] [-fetch] [-clean]");
+        throw HarmonySilentException{};
     };
 
     if (argc < 2) {
@@ -50,4 +50,35 @@ int main(int argc, char* argv[])
 
     MsvcBackend backend;
     Build(tasks, targets, backend);
+
+    // HARMONY_IGNORE(argc, argv)
+
+    // fs::path path = "D:/Dev/Cloned-Temp/Propolis/Source/Ranges/RegisterTraits.hpp";
+    // std::string data;
+    // {
+    //     std::ifstream in(path, std::ios::binary);
+    //     auto size = fs::file_size(path);
+    //     data.resize(size + 16, '\0');
+    //     in.read(data.data(), size);
+    //     std::memset(data.data() + size, '\n', 16);
+    // }
+
+    // LogDebug("Scanning file: [{}]", path.string());
+    // ScanFile(path, data, [](Component&){});
+}
+catch (const std::exception& e)
+{
+    LogError("{}", e.what());
+}
+catch (std::error_code code)
+{
+    LogError("({}) {}", code.value(), code.message());
+}
+catch (HarmonySilentException)
+{
+    // do nothing
+}
+catch (...)
+{
+    LogError("Unknown Error");
 }

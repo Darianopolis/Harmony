@@ -48,33 +48,89 @@ void LogWarn(const std::format_string<Args...> fmt, Args&&... args)
     os << "[\u001B[93mWARN\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
 }
 
+namespace harmony::formatting::detail {
+    inline
+    uint32_t DecimalsFor3SF(double value)
+    {
+        if (value < 10) return 2;
+        if (value < 100) return 1;
+        return 0;
+    }
+}
+
 inline
 std::string DurationToString(std::chrono::duration<double, std::nano> dur)
 {
+    using harmony::formatting::detail::DecimalsFor3SF;
+
     double nanos = dur.count();
 
-    if (nanos > 1e9) {
+    if (nanos >= 1e9) {
         double seconds = nanos / 1e9;
-        uint32_t decimals = 2 - uint32_t(std::log10(seconds));
-        return std::format("{:.{}f}s",seconds, decimals);
+        return std::format("{:.{}f}s", seconds, DecimalsFor3SF(seconds));
     }
 
-    if (nanos > 1e6) {
+    if (nanos >= 1e6) {
         double millis = nanos / 1e6;
-        uint32_t decimals = 2 - uint32_t(std::log10(millis));
-        return std::format("{:.{}f}ms", millis, decimals);
+        return std::format("{:.{}f}ms", millis, DecimalsFor3SF(millis));
     }
 
-    if (nanos > 1e3) {
+    if (nanos >= 1e3) {
         double micros = nanos / 1e3;
-        uint32_t decimals = 2 - uint32_t(std::log10(micros));
-        return std::format("{:.{}f}us", micros, decimals);
+        return std::format("{:.{}f}us", micros, DecimalsFor3SF(micros));
     }
 
-    if (nanos > 0) {
-        uint32_t decimals = 2 - uint32_t(std::log10(nanos));
-        return std::format("{:.{}f}ns", nanos, decimals);
+    if (nanos >= 0) {
+        return std::format("{:.{}f}ns", nanos, DecimalsFor3SF(nanos));
     }
 
     return "0";
+}
+
+inline
+std::string ByteSizeToString(uint64_t bytes)
+{
+    using harmony::formatting::detail::DecimalsFor3SF;
+
+    constexpr auto Exabyte   = 1ull << 60;
+    if (bytes >= Exabyte) {
+        double exabytes = bytes / double(Exabyte);
+        return std::format("{:.{}f}EiB", exabytes, DecimalsFor3SF(exabytes));
+    }
+
+    constexpr auto Petabyte  = 1ull << 50;
+    if (bytes >= Petabyte) {
+        double petabytes = bytes / double(Petabyte);
+        return std::format("{:.{}f}PiB", petabytes, DecimalsFor3SF(petabytes));
+    }
+
+    constexpr auto Terabyte  = 1ull << 40;
+    if (bytes >= Terabyte) {
+        double terabytes = bytes / double(Terabyte);
+        return std::format("{:.{}f}TiB", terabytes, DecimalsFor3SF(terabytes));
+    }
+
+    constexpr auto Gigabyte = 1ull << 30;
+    if (bytes >= Gigabyte) {
+        double gigabytes = bytes / double(Gigabyte);
+        return std::format("{:.{}f}GiB", gigabytes, DecimalsFor3SF(gigabytes));
+    }
+
+    constexpr auto Megabyte = 1ull << 20;
+    if (bytes >= Megabyte) {
+        double megabytes = bytes / double(Megabyte);
+        return std::format("{:.{}f}MiB", megabytes, DecimalsFor3SF(megabytes));
+    }
+
+    constexpr auto Kilobyte = 1ull << 10;
+    if (bytes >= Kilobyte) {
+        double kilobytes = bytes / double(Kilobyte);
+        return std::format("{:.{}f}KiB", kilobytes, DecimalsFor3SF(kilobytes));
+    }
+
+    if (bytes > 0) {
+        return std::format("{} byte{}", double(bytes), bytes == 1 ? "" : "s");
+    }
+
+    return "0 bytes";
 }
