@@ -4,7 +4,6 @@
 #include <configuration.hpp>
 
 #ifndef HARMONY_USE_IMPORT_STD
-#include <unordered_map>
 #include <span>
 #include <random>
 #endif
@@ -12,9 +11,9 @@
 struct Backend {
     virtual ~Backend() = 0;
 
-    virtual void FindDependencies(std::span<const Task> tasks, std::vector<std::string>& dependency_info_p1689_json) const
+    virtual void FindDependencies(const Task& task, std::string& dependency_info_p1689_json) const
     {
-        HARMONY_IGNORE(tasks, dependency_info_p1689_json)
+        HARMONY_IGNORE(task, dependency_info_p1689_json)
         Error("FindDependencies is not implemented");
     }
 

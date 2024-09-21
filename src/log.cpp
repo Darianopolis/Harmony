@@ -3,6 +3,6 @@ import std;
 import std.compat;
 #endif
 
-#include <core.hpp>
+#include "log.hpp"
 
-extern bool TraceCmds = true;
+LogLevel log_level = LogLevel::Info;

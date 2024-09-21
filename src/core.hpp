@@ -132,10 +132,10 @@ void Error(std::string_view message)
 // -----------------------------------------------------------------------------
 
 enum class PathFormatOptions {
-    Forward      = 1, // Use forward slashes
-    Backward     = 2, // Use backward slashes
-    QuoteSpaces = 4, // Quote string if contains spaces
-    Absolute     = 8, // Convert to absolute path
+    Forward      =  1, // Use forward slashes
+    Backward     =  2, // Use backward slashes
+    QuoteSpaces  =  4, // Quote string if contains spaces
+    Absolute     =  8, // Convert to absolute path
     Canonical    = 16, // Convert to canonical form
 };
 

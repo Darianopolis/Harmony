@@ -7,6 +7,12 @@ Precompiled Headers + Modules
 - https://learn.microsoft.com/en-us/cpp/build/reference/yc-create-precompiled-header-file?view=msvc-170
 - https://learn.microsoft.com/en-us/cpp/build/reference/yu-use-precompiled-header-file?view=msvc-170
 
+LLVM Build
+
+  Install [C++ ATL for build tools] component from Visual Studio Installer
+  cmake -B build -G Ninja -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" -DCMAKE_BUILD_TYPE=Release ./llvm
+  cmake --build build --config Release
+
 JSON Library
 
 - https://github.com/ibireme/yyjson
@@ -19,6 +25,7 @@ Job System
 MSBuild Generation
 
 - https://learn.microsoft.com/en-us/cpp/build/msbuild-visual-cpp?view=msvc-170
+- https://learn.microsoft.com/en-us/cpp/build/reference/vcxproj-filters-files?view=msvc-170
 
 Removing responsibility from toolchain backends
 

@@ -1,10 +1,29 @@
 #pragma once
 
+#ifndef HARMONY_USE_IMPORT_STD
 #include <format>
 #include <syncstream>
 #include <iostream>
+#endif
 
 constexpr std::string_view EndLogLine = "\u001B[0m\n";
+
+enum class LogLevel : uint32_t
+{
+    Trace = 0,
+    Debug = 1,
+    Info  = 2,
+    Warn  = 3,
+    Error = 4,
+};
+
+extern LogLevel log_level;
+
+inline
+bool IsLogLevel(LogLevel level)
+{
+    return uint32_t(level) >= uint32_t(log_level);
+}
 
 template<class... Args>
 void Log(const std::format_string<Args...> fmt, Args&&... args)
@@ -14,38 +33,43 @@ void Log(const std::format_string<Args...> fmt, Args&&... args)
 }
 
 template<class... Args>
-void LogInfo(const std::format_string<Args...> fmt, Args&&... args)
-{
-    std::osyncstream os(std::cout);
-    os << "[\u001B[94mINFO\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
-}
-
-template<class... Args>
-void LogDebug(const std::format_string<Args...> fmt, Args&&... args)
-{
-    std::osyncstream os(std::cout);
-    os << "[\u001B[96mDEBUG\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
-}
-
-template<class... Args>
 void LogTrace(const std::format_string<Args...> fmt, Args&&... args)
 {
+    if (!IsLogLevel(LogLevel::Trace)) return;
     std::osyncstream os(std::cout);
     os << "[\u001B[90mTRACE\u001B[0m] \u001B[90m" << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
 }
 
 template<class... Args>
-void LogError(const std::format_string<Args...> fmt, Args&&... args)
+void LogDebug(const std::format_string<Args...> fmt, Args&&... args)
 {
+    if (!IsLogLevel(LogLevel::Debug)) return;
     std::osyncstream os(std::cout);
-    os << "[\u001B[91mERROR\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
+    os << "[\u001B[96mDEBUG\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
+}
+
+template<class... Args>
+void LogInfo(const std::format_string<Args...> fmt, Args&&... args)
+{
+    if (!IsLogLevel(LogLevel::Info)) return;
+    std::osyncstream os(std::cout);
+    os << "[\u001B[94mINFO\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
 }
 
 template<class... Args>
 void LogWarn(const std::format_string<Args...> fmt, Args&&... args)
 {
+    if (!IsLogLevel(LogLevel::Warn)) return;
     std::osyncstream os(std::cout);
     os << "[\u001B[93mWARN\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
+}
+
+template<class... Args>
+void LogError(const std::format_string<Args...> fmt, Args&&... args)
+{
+    if (!IsLogLevel(LogLevel::Error)) return;
+    std::osyncstream os(std::cout);
+    os << "[\u001B[91mERROR\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
 }
 
 namespace harmony::formatting::detail {

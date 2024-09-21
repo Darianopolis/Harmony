@@ -1,9 +1,13 @@
+// TODO: Abstract json writing
+#include <yyjson.h>
+
 #ifdef HARMONY_USE_IMPORT_STD
 import std;
 import std.compat;
 #endif
 
 #include "clangcl-backend.hpp"
+#include "msvc-common.hpp"
 #include "configuration.hpp"
 
 #ifndef HARMONY_USE_IMPORT_STD
@@ -12,77 +16,48 @@ import std.compat;
 #include <print>
 #include <fstream>
 #include <unordered_set>
-#include <thread>
 #endif
 
-// TODO: Abstract json writing
-#include <yyjson.h>
-
+// TODO: These should be configurable at runtime
 constexpr std::string_view ClangScanDepsPath = "D:/Dev/Cloned-Temp/llvm-project/build/bin/clang-scan-deps.exe";
 constexpr std::string_view ClangClPath = "D:/Dev/Cloned-Temp/llvm-project/build/bin/clang-cl.exe";
 
+ClangClBackend::ClangClBackend()
+{
+    msvc::EnsureVisualStudioEnvironment();
+}
+
 ClangClBackend::~ClangClBackend() = default;
 
-static
-auto PathToCmdString(const fs::path& path)
+void ClangClBackend::FindDependencies(const Task& task, std::string& dependency_info_p1689_json) const
 {
-    return FormatPath(path, PathFormatOptions::Backward | PathFormatOptions::QuoteSpaces | PathFormatOptions::Absolute);
-}
+    auto output_location = BuildDir / std::format("{}.p1689.json", task.unique_name);
 
-void ClangClBackend::FindDependencies(std::span<const Task> tasks, std::vector<std::string>& dependency_info_p1689_json) const
-{
-    dependency_info_p1689_json.resize(tasks.size());
+    auto cmd = std::format("{} -format=p1689 -o {} -- {} /std:c++latest /nologo -x c++-module {} ",
+        ClangScanDepsPath, msvc::PathToCmdString(output_location), ClangClPath, msvc::PathToCmdString(task.source.path));
 
-    // fs::path output_location = BuildDir / "p1689.json";
-    // for (auto& task : tasks) {
+    for (auto& include_dir : task.include_dirs) {
+        cmd += std::format(" /I{}", msvc::PathToCmdString(include_dir));
+    }
 
-#pragma omp parallel for
-    for (uint32_t i = 0; i < tasks.size(); ++i) {
-        auto& task = tasks[i];
-        auto output_location = BuildDir / std::format("p1689_{}.json", i);
+    for (auto& define : task.defines) {
+        cmd += std::format(" /D{}", define);
+    }
 
-        auto cmd = std::format("{} -format=p1689 -o {} -- {} /std:c++latest /nologo -x c++-module {} ",
-            ClangScanDepsPath, PathToCmdString(output_location), ClangClPath, PathToCmdString(task.source.path));
-
-        for (auto& include_dir : task.include_dirs) {
-            cmd += std::format(" /I{}", PathToCmdString(include_dir));
-        }
-
-        for (auto& define : task.defines) {
-            cmd += std::format(" /D{}", define);
-        }
-
-        LogCmd(cmd);
-        std::system(cmd.c_str());
-        {
-            std::ifstream file(output_location, std::ios::binary);
-            auto size = fs::file_size(output_location);
-            // auto& json_output = dependency_info_p1689_json.emplace_back();
-            auto& json_output = dependency_info_p1689_json[i];
-            json_output.resize(size, '\0');
-            file.read(json_output.data(), size);
-        }
+    LogCmd(cmd);
+    std::system(cmd.c_str());
+    {
+        std::ifstream file(output_location, std::ios::binary);
+        auto size = fs::file_size(output_location);
+        dependency_info_p1689_json.resize(size, '\0');
+        file.read(dependency_info_p1689_json.data(), size);
     }
 }
 
+// TODO: This is shared with the MSVC backend
 void ClangClBackend::GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) const
 {
-    auto tools_dir = fs::path(std::getenv("VCToolsInstallDir"));
-    auto module_file = tools_dir / "modules/std.ixx";
-
-    if (!fs::exists(module_file)) {
-        Error("std.ixx not found. Please install the C++ Modules component for Visual Studio");
-    }
-
-    std::println("std module path: {}", module_file.string());
-
-    if (std_task) {
-        std_task->source.path = module_file;
-    }
-
-    if (std_compat_task) {
-        std_compat_task->source.path = tools_dir / "modules/std.compat.ixx";
-    }
+    msvc::GenerateStdModuleTasks(std_task, std_compat_task);
 }
 
 void ClangClBackend::AddTaskInfo(std::span<Task> tasks) const
@@ -98,61 +73,24 @@ void ClangClBackend::AddTaskInfo(std::span<Task> tasks) const
     }
 }
 
-static
-void SafeCompleteCmd(std::string& cmd, std::vector<std::string>& cmds)
-{
-    auto build_dir = BuildDir;
-
-    size_t cmd_length = cmd.size();
-    for (auto& cmd_part : cmds) {
-        cmd_length += 1 + cmd_part.size();
-    }
-
-    constexpr uint32_t CmdSizeLimit = 4000;
-
-    if (cmd_length > CmdSizeLimit) {
-        static std::atomic_uint32_t cmd_file_id = 0;
-
-        auto cmd_dir = build_dir / "cmds";
-        fs::create_directories(cmd_dir);
-        auto cmd_path = cmd_dir / std::format("cmd.{}", cmd_file_id++);
-        std::ofstream out(cmd_path, std::ios::binary);
-        for (uint32_t i = 0; i < cmds.size(); ++i) {
-            if (i > 0) out.write("\n", 1);
-            out.write(cmds[i].data(), cmds[i].size());
-        }
-        out.flush();
-        out.close();
-
-        cmd += " @";
-        cmd += PathToCmdString(cmd_path);
-
-    } else {
-        for (auto& cmd_part : cmds) {
-            cmd += " ";
-            cmd += cmd_part;
-        }
-    }
-}
-
 bool ClangClBackend::CompileTask(const Task& task) const
 {
     auto build_dir = BuildDir;
 
-    auto cmd = std::format("cd /d {} && {}", PathToCmdString(build_dir), ClangClPath);
+    auto cmd = std::format("cd /d {} && {}", msvc::PathToCmdString(build_dir), ClangClPath);
 
     std::vector<std::string> cmds;
 
     cmds.emplace_back(std::format("/c /nologo -Wno-everything /EHsc"));
     switch (task.source.type) {
-        break;case SourceType::CSource: cmds.emplace_back(std::format("-x c {}", PathToCmdString(task.source.path)));
-        break;case SourceType::CppSource: cmds.emplace_back(std::format("/std:c++latest -x c++ {}", PathToCmdString(task.source.path)));
+        break;case SourceType::CSource: cmds.emplace_back(std::format("-x c {}", msvc::PathToCmdString(task.source.path)));
+        break;case SourceType::CppSource: cmds.emplace_back(std::format("/std:c++latest -x c++ {}", msvc::PathToCmdString(task.source.path)));
         break;case SourceType::CppHeader: {
             if (task.is_header_unit) {
-                cmds.emplace_back(std::format("/std:c++latest -x c++ -fmodule-header={}", PathToCmdString(task.source.path)));
+                cmds.emplace_back(std::format("/std:c++latest -x c++ -fmodule-header={}", msvc::PathToCmdString(task.source.path)));
             } else Error("Attempted to compile header that isn't being exported as a header unit");
         }
-        break;case SourceType::CppInterface: cmds.emplace_back(std::format("/std:c++latest -x c++-module {}", PathToCmdString(task.source.path)));
+        break;case SourceType::CppInterface: cmds.emplace_back(std::format("/std:c++latest -x c++-module {}", msvc::PathToCmdString(task.source.path)));
         break;default: Error("Cannot compile: unknown source type!");
     }
 
@@ -161,7 +99,7 @@ bool ClangClBackend::CompileTask(const Task& task) const
     // cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 /std:c++latest -MD");
 
     for (auto& include_dir : task.include_dirs) {
-        cmds.emplace_back(std::format("/I{}", PathToCmdString(include_dir)));
+        cmds.emplace_back(std::format("/I{}", msvc::PathToCmdString(include_dir)));
     }
 
     for (auto& define : task.defines) {
@@ -177,9 +115,9 @@ bool ClangClBackend::CompileTask(const Task& task) const
             seen.emplace(depends_on.name);
 
             if (depends_on.source->is_header_unit) {
-                cmds.emplace_back(std::format("-fmodule-file={}", PathToCmdString(depends_on.source->source.path), PathToCmdString(depends_on.source->bmi)));
+                cmds.emplace_back(std::format("-fmodule-file={}", msvc::PathToCmdString(depends_on.source->source.path), msvc::PathToCmdString(depends_on.source->bmi)));
             } else {
-                cmds.emplace_back(std::format("-fmodule-file={}={}", depends_on.name, PathToCmdString(depends_on.source->bmi)));
+                cmds.emplace_back(std::format("-fmodule-file={}={}", depends_on.name, msvc::PathToCmdString(depends_on.source->bmi)));
             }
             self(*depends_on.source);
         }
@@ -196,7 +134,7 @@ bool ClangClBackend::CompileTask(const Task& task) const
 
     // Generate cmd string, use command files to avoid cmd line size limit
 
-    SafeCompleteCmd(cmd, cmds);
+    msvc::SafeCompleteCmd(cmd, cmds);
 
     LogCmd(cmd);
 
@@ -222,14 +160,14 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
 
         cmds.emplace_back(std::format("/c /nologo -Wno-everything /EHsc"));
         switch (task.source.type) {
-            break;case SourceType::CSource: cmds.emplace_back(std::format("-x c {}", PathToCmdString(task.source.path)));
-            break;case SourceType::CppSource: cmds.emplace_back(std::format("/std:c++latest -x c++ {}", PathToCmdString(task.source.path)));
+            break;case SourceType::CSource: cmds.emplace_back(std::format("-x c {}", msvc::PathToCmdString(task.source.path)));
+            break;case SourceType::CppSource: cmds.emplace_back(std::format("/std:c++latest -x c++ {}", msvc::PathToCmdString(task.source.path)));
             break;case SourceType::CppHeader: {
                 if (task.is_header_unit) {
-                    cmds.emplace_back(std::format("/std:c++latest -x c++ -fmodule-header={}", PathToCmdString(task.source.path)));
+                    cmds.emplace_back(std::format("/std:c++latest -x c++ -fmodule-header={}", msvc::PathToCmdString(task.source.path)));
                 } else Error("Attempted to compile header that isn't being exported as a header unit");
             }
-            break;case SourceType::CppInterface: cmds.emplace_back(std::format("/std:c++latest -x c++-module {}", PathToCmdString(task.source.path)));
+            break;case SourceType::CppInterface: cmds.emplace_back(std::format("/std:c++latest -x c++-module {}", msvc::PathToCmdString(task.source.path)));
             break;default: Error("Cannot compile: unknown source type!");
         }
 
@@ -238,7 +176,7 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
         // cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 /std:c++latest -MD");
 
         for (auto& include_dir : task.include_dirs) {
-            cmds.emplace_back(std::format("/I{}", PathToCmdString(include_dir)));
+            cmds.emplace_back(std::format("/I{}", msvc::PathToCmdString(include_dir)));
         }
 
         for (auto& define : task.defines) {
@@ -252,7 +190,7 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
             cmds.emplace_back(std::format("-o {}", task.obj.filename().string()));
         }
 
-        SafeCompleteCmd(cmd, cmds);
+        msvc::SafeCompleteCmd(cmd, cmds);
 
         yyjson_mut_obj_add_strcpy(doc, out_task, "directory", fs::absolute(build_dir).string().c_str());
         yyjson_mut_obj_add_strcpy(doc, out_task, "command", cmd.c_str());

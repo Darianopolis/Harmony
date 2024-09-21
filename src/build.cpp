@@ -29,7 +29,11 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     std::vector<std::string> dependency_info;
     if (use_backend_dependency_scan) {
-        backend.FindDependencies(tasks, dependency_info);
+        dependency_info.resize(tasks.size());
+#pragma omp parallel for
+        for (uint32_t i = 0; i < tasks.size(); ++i) {
+            backend.FindDependencies(tasks[i], dependency_info[i]);
+        }
     }
 
     {
@@ -70,9 +74,9 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                         }
                     }
                 }
-            }
 
-            LogDebug("  build-deps results:");
+                LogDebug("  build-deps results:");
+            }
 
             {
                 std::ifstream in(task.source.path, std::ios::binary | std::ios::ate);
@@ -296,8 +300,10 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                 }
             }
 
-            LogDebug("Maximum task depth = {}", max_depth);
-            ReadMaxDepthChain(*max_task);
+            if (max_task) {
+                LogDebug("Maximum task depth = {}", max_depth);
+                ReadMaxDepthChain(*max_task);
+            }
         }
     }
 

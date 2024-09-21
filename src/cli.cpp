@@ -6,20 +6,32 @@ import std.compat;
 #include <build.hpp>
 #include <configuration.hpp>
 
-#include <backend/msvc/msvc-backend.hpp>
-#include <backend/clang/clangcl-backend.hpp>
+#include <backend/msvc-backend.hpp>
+#include <backend/clangcl-backend.hpp>
 
 int main(int argc, char* argv[]) try
 {
+    bool wait_on_close = false;
+
     auto start = chr::steady_clock::now();
     HARMONY_DEFER(&) {
         auto end = chr::steady_clock::now();
         LogInfo("--------------------------------------------------------------------------------");
         LogInfo("Elapsed: {}", DurationToString(end - start));
+        if (wait_on_close) {
+            log_level = LogLevel::Info;
+            LogInfo("Press enter to close");
+            std::cin.get();
+        }
     };
 
-    auto PrintUsage = []() {
-        LogInfo("Usage: [build file] [-fetch] [-clean]");
+    auto PrintUsage = [] {
+        LogInfo(R"(Usage: [build file] <flags...>
+ -fetch         :: Check for dependency updates
+ -clean-deps    :: Clean fetch and build all dependencies
+ -log-[level]   :: Set log level (trace, debug, info *default*, warn, error)
+ -wait-on-close :: Require enter press to close (for debugging purposes)
+)");
         throw HarmonySilentException{};
     };
 
@@ -27,11 +39,22 @@ int main(int argc, char* argv[]) try
         PrintUsage();
     }
 
-    bool fetch = false;
-    bool clean = false;
+    bool fetch_dependencies = false;
+    bool clean_dependencies = false;
     for (int i = 2; i < argc; ++i) {
-             if ("-fetch"sv == argv[i]) fetch = true;
-        else if ("-clean"sv == argv[i]) clean = true;
+        // Check for updates
+        if ("-fetch"sv == argv[i]) fetch_dependencies = true;
+        // Clean rebuild dependencies
+        else if ("-clean-deps"sv == argv[i]) clean_dependencies = true;
+        // Logging flags
+        else if ("-log-trace"sv == argv[i]) log_level = LogLevel::Trace;
+        else if ("-log-debug"sv == argv[i]) log_level = LogLevel::Debug;
+        else if ("-log-info"sv == argv[i]) log_level = LogLevel::Info;
+        else if ("-log-warn"sv == argv[i]) log_level = LogLevel::Warn;
+        else if ("-log-error"sv == argv[i]) log_level = LogLevel::Error;
+        // CLion external terminal utilities
+        else if ("-wait-on-close"sv == argv[i]) wait_on_close = true;
+        // Unknown switch
         else {
             LogError("Unknown switch: {}", argv[i]);
             PrintUsage();
@@ -40,9 +63,7 @@ int main(int argc, char* argv[]) try
 
     auto config = ReadFileToString(argv[1]);
 
-    if (fetch) {
-        Fetch(config, clean);
-    }
+    Fetch(config, clean_dependencies, fetch_dependencies);
 
     std::unordered_map<std::string, Target> targets;
     std::vector<Task> tasks;

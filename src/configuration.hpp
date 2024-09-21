@@ -2,7 +2,7 @@
 
 #include <core.hpp>
 
-#ifndef HARMONY_USE_STD_MODULES
+#ifndef HARMONY_USE_IMPORT_STD
 #include <unordered_set>
 #include <unordered_map>
 #endif
@@ -82,4 +82,4 @@ struct Task {
 };
 
 void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unordered_map<std::string, Target>& out_targets);
-void Fetch(std::string_view config, bool clean);
+void Fetch(std::string_view config, bool clean, bool update);

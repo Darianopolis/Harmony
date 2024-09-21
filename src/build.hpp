@@ -28,6 +28,6 @@ template<typename Fn>
 void ScanFile(const fs::path& path, std::string_view data, Fn&& fn)
 {
     ScanFile(path, data, +[](void* payload, Component& comp) {
-        (*(Fn*)payload)(comp);
+        static_cast<Fn *>(payload)->operator()(comp);
     }, &fn);
 }
