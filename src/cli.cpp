@@ -11,19 +11,19 @@ import std.compat;
 
 int main(int argc, char* argv[]) try
 {
-    bool wait_on_close = false;
+     bool wait_on_close = false;
 
-    auto start = chr::steady_clock::now();
-    HARMONY_DEFER(&) {
-        auto end = chr::steady_clock::now();
-        LogInfo("--------------------------------------------------------------------------------");
-        LogInfo("Elapsed: {}", DurationToString(end - start));
-        if (wait_on_close) {
-            log_level = LogLevel::Info;
-            LogInfo("Press enter to close");
-            std::cin.get();
-        }
-    };
+     auto start = chr::steady_clock::now();
+     HARMONY_DEFER(&) {
+         auto end = chr::steady_clock::now();
+         LogInfo("--------------------------------------------------------------------------------");
+         LogInfo("Elapsed: {}", DurationToString(end - start));
+         if (wait_on_close) {
+             log_level = LogLevel::Info;
+             LogInfo("Press enter to close");
+             std::cin.get();
+         }
+     };
 
     auto PrintUsage = [] {
         LogInfo(R"(Usage: [build file] <flags...>
@@ -70,11 +70,15 @@ int main(int argc, char* argv[]) try
     ParseConfig(config, tasks, targets);
 
     MsvcBackend backend;
+    // ClangClBackend backend;
     Build(tasks, targets, backend);
 
     // HARMONY_IGNORE(argc, argv)
-
-    // fs::path path = "D:/Dev/Cloned-Temp/Propolis/Source/Ranges/RegisterTraits.hpp";
+    //
+    // log_level = LogLevel::Trace;
+    // wait_on_close = true;
+    //
+    // fs::path path = "D:/Dev/Cloned-Temp/Propolis/Source/Casts/Casts.ixx";
     // std::string data;
     // {
     //     std::ifstream in(path, std::ios::binary);
@@ -82,8 +86,11 @@ int main(int argc, char* argv[]) try
     //     data.resize(size + 16, '\0');
     //     in.read(data.data(), size);
     //     std::memset(data.data() + size, '\n', 16);
+    //     data[size] = '\n';
+    //     data[size + 1] = '"';
+    //     data[size + 2] = '>';
     // }
-
+    //
     // LogDebug("Scanning file: [{}]", path.string());
     // ScanFile(path, data, [](Component&){});
 }

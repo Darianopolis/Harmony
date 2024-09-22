@@ -161,17 +161,23 @@ void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unorder
             auto AddSourceFile = [&](const fs::path& file, SourceType type) {
                 auto ext = file.extension();
 
-                if      (ext == ".c") type = SourceType::CSource;
-                else if (ext == ".cpp") type = SourceType::CppSource;
-                else if (ext == ".hpp") type = SourceType::CppHeader;
-                else if (ext == ".ixx") type = SourceType::CppInterface;
-                else if (ext == ".cppm") type = SourceType::CppInterface;
+                auto detected_type = SourceType::Unknown;
+
+                if      (ext == ".c") detected_type = SourceType::CSource;
+                else if (ext == ".cpp") detected_type = SourceType::CppSource;
+                else if (ext == ".hpp") detected_type = SourceType::CppHeader;
+                else if (ext == ".ixx") detected_type = SourceType::CppInterface;
+                else if (ext == ".cppm") detected_type = SourceType::CppInterface;
+
+                if (type == SourceType::Unknown) {
+                    type = detected_type;
+                }
 
                 if (type == SourceType::Unknown) return;
 
                 auto& task = tasks.emplace_back();
                 task.target = &target;
-                task.source = { file, type };
+                task.source = { file, type, detected_type };
 
                 // TODO: We really don't want to duplicate this for every task
                 task.include_dirs = includes;

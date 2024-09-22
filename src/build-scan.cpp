@@ -1,9 +1,13 @@
+#include <xxhash.h>
+
 #ifdef HARMONY_USE_IMPORT_STD
 import std;
 import std.compat;
 #endif
 
 #include <build.hpp>
+
+#include "xxhash.h"
 
 // :: // -> \n
 // :: /* -> */
@@ -27,7 +31,7 @@ bool wsnl(char c)
     return ws(c) || nl(c);
 }
 
-void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*, Component&), void* payload)
+ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*, Component&), void* payload)
 {
     // TODO: Handle comments and strings
     // TODO: Handle basic preprocessor evaluation
@@ -59,9 +63,9 @@ void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*
 // #define log_trace(...) std::println(__VA_ARGS__)
 #define log_trace(...)
 
-    auto peek_false = [&](const char* c) -> bool
+    auto peek_false = [&](const char* c, const std::source_location& loc = std::source_location::current()) -> bool
     {
-        log_trace("[{: 4}] {}", c - b, escape_char(*c));
+        log_trace("<{: 4}>[{: 4}] {}", loc.line(), c - b, escape_char(*c));
         HARMONY_IGNORE(c)
         return false;
     };
@@ -69,7 +73,8 @@ void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*
     std::string_view primary_module_name;
 
     while (c != e) {
-        if (c > e) Error("Overrun buffer!");
+        if (c > e)
+            Error("Overrun buffer!");
 
         peek_false(c);
 
@@ -135,14 +140,14 @@ void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*
                 ++c; continue;
             }
             peek_false(c);
-            while (wsnl(*++c));
+            while (wsnl(*++c) || peek_false(c));
             peek_false(c);
             if (*c == ';') {
                 // Global module fragment, ignore
                 log_trace("global module fragment, ignore");
                 ++c; continue;
             }
-            if (true && (*c == '"' || *c == '<')) {
+            if (*c == '"' || *c == '<') {
                 is_header_unit = true;
                 angled = *c == '<';
                 name_start = c + 1;
@@ -157,10 +162,17 @@ void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*
                     log_trace("Expected semicolon to end import statement, found {}", *c);
                     continue;
                 }
+            } else if (!wsnl(*(c - 1))) {
+                log_trace("expected '\"', '<' or whitespace after [module/import] keyword, found {}", *c);
+                continue;
             } else {
+                auto IsIdentifierChar = [](char ch) {
+                    // return !(wsnl(ch) || ch == ';' || ch == ':');
+                    return std::isalnum(ch) || ch == '.' || ch == '_';
+                };
                 log_trace("parsing name");
                 name_start = c;
-                while (peek_false(c) || std::isalnum(*c) || *c == '.') c++;
+                while (peek_false(c) || IsIdentifierChar(*c)) c++;
                 name_end = c;
                 log_trace("end of name: [{}]", std::string_view(name_start, name_end));
                 peek_false(c);
@@ -170,7 +182,7 @@ void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*
                     log_trace("parsing partition name");
                     while (wsnl(*++c));
                     part_start = c;
-                    while (peek_false(c) || std::isalnum(*++c) || *c == '.');
+                    while (peek_false(c) || IsIdentifierChar(*c)) c++;
                     part_end = c;
                     log_trace("end of part name: [{}]", std::string_view(part_start, part_end));
                 }
@@ -231,4 +243,12 @@ void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*
 
     LogDebug("Parsed {} in {} ({}/s)", ByteSizeToString(data.size()), DurationToString(end_time - start_time),
         ByteSizeToString(uint64_t(double(data.size()) / chr::duration_cast<chr::duration<double>>(end_time - start_time).count())));
+
+    auto hash = XXH64(data.data(), data.size(), 0);
+
+    return ScanResult {
+        .size =  data.size(),
+        .hash = hash,
+        .unique_name = std::format("{}.{:x}", path.filename().string(), hash),
+    };
 }

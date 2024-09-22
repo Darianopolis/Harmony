@@ -5,6 +5,8 @@ import std.compat;
 
 #include "build.hpp"
 
+#include <generators/cmake-generator.hpp>
+
 #ifndef HARMONY_USE_IMPORT_STD
 #include <print>
 #include <string_view>
@@ -85,9 +87,13 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                 data.resize(size + 16, '\0');
                 in.read(data.data(), size);
                 std::memset(data.data() + size, '\n', 16);
+                // TODO: This should be handled in ScanFile
+                data[size] = '\n';
+                data[size + 1] = '"';
+                data[size + 2] = '>';
             }
 
-            ScanFile(task.source.path, data, [&](Component& comp) {
+            auto scan_result = ScanFile(task.source.path, data, [&](Component& comp) {
                 if (!comp.imported && comp.exported) {
                     if (use_backend_dependency_scan) {
                         produced_set[comp.name]--;
@@ -102,6 +108,8 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                     }
                 }
             });
+
+            task.unique_name = scan_result.unique_name;
 
             if (use_backend_dependency_scan) {
                 for (auto&[r, s] : produced_set) {
@@ -193,6 +201,11 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
         marked_header_units.erase(path);
     }
 
+    // TODO: This should be a separate stage launched by cli.cpp
+    {
+        GenerateCMake(".", tasks, targets);
+    }
+
     LogDebug("Generating external header unit tasks");
 
     {
@@ -206,6 +219,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
             task.is_header_unit = true;
             task.produces.emplace_back(logical_name);
             task.external = true;
+
             task.unique_name = std::format("{}.{}E", path.filename().string(), ext_header_uid++);
         }
     }

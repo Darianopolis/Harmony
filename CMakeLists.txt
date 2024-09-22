@@ -20,6 +20,10 @@ include(FetchContent)
 fetchcontent_declare(yyjson
         GIT_REPOSITORY https://github.com/ibireme/yyjson.git)
 fetchcontent_makeavailable(yyjson)
+fetchcontent_declare(xxhash
+        GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
+        GIT_TAG origin/dev)
+fetchcontent_makeavailable(xxhash)
 # ----------------------------------------------------------------------------------------------------------------------
 #       Harmony
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,16 +37,21 @@ add_executable(harmony
         src/core.cpp
         src/json.cpp
         src/backend/msvc-common.cpp
-        src/log.cpp)
-target_include_directories(harmony PRIVATE
+        src/log.cpp
+        ${xxhash_SOURCE_DIR}/xxhash.c
+        src/generators/cmake-generator.hpp
+        src/generators/cmake-generator.cpp)
+target_include_directories(harmony
+        PRIVATE
         src
-        ${yyjson_SOURCE_DIR}/src)
+        ${yyjson_SOURCE_DIR}/src
+        ${xxhash_SOURCE_DIR})
 target_link_libraries(harmony
         PUBLIC
         yyjson)
 set_target_properties(harmony PROPERTIES LINKER_LANGUAGE CXX)
 add_custom_command(TARGET harmony POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:harmony>
-        out/harmony.exe)
+        ${CMAKE_SOURCE_DIR}/out/harmony.exe)
 # ----------------------------------------------------------------------------------------------------------------------
 #       Test
 # ----------------------------------------------------------------------------------------------------------------------
@@ -55,4 +64,4 @@ target_sources(test
         test/other.ixx)
 set_target_properties(test PROPERTIES LINKER_LANGUAGE CXX)
 add_custom_command(TARGET test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:test>
-        out/test.exe)
+        ${CMAKE_SOURCE_DIR}/out/test.exe)

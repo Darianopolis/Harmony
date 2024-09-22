@@ -22,12 +22,19 @@ struct Component
     bool angled;
 };
 
-void ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*, Component&), void* payload);
+struct ScanResult
+{
+    size_t size;
+    uint64_t hash;
+    std::string unique_name;
+};
+
+ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*, Component&), void* payload);
 
 template<typename Fn>
-void ScanFile(const fs::path& path, std::string_view data, Fn&& fn)
+ScanResult ScanFile(const fs::path& path, std::string_view data, Fn&& fn)
 {
-    ScanFile(path, data, +[](void* payload, Component& comp) {
+    return ScanFile(path, data, +[](void* payload, Component& comp) {
         static_cast<Fn *>(payload)->operator()(comp);
     }, &fn);
 }

@@ -61,3 +61,20 @@ Dependency tracking
 
   To reuse vendor dependency parsing (instead of implementing full preprocessor):
     Generate outputs with preprocessor+import *only* for all tracked sources
+
+File Structure
+
+  .harmony/
+    profiles/
+      %profileName%/
+        env
+        profile.jsonc
+      ...
+    tmp/
+      %temporaryBuildFiles%
+    targets/
+      %targetName%/
+        out/
+          %outputFiles%
+          ...
+      ...

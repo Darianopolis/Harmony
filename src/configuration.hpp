@@ -22,6 +22,7 @@ struct Source
 {
     fs::path path;
     SourceType type = SourceType::Unknown;
+    SourceType detected_type = SourceType::Unknown;
 };
 
 enum class ExecutableType

@@ -9,3 +9,4 @@ out/
 *compile_commands.json*
 *.build.jsonc
 NOTES.local.txt
+CMakeLists.txt.*

@@ -87,12 +87,14 @@ bool ClangClBackend::CompileTask(const Task& task) const
         break;case SourceType::CppSource: cmds.emplace_back(std::format("/std:c++latest -x c++ {}", msvc::PathToCmdString(task.source.path)));
         break;case SourceType::CppHeader: {
             if (task.is_header_unit) {
-                cmds.emplace_back(std::format("/std:c++latest -x c++ -fmodule-header={}", msvc::PathToCmdString(task.source.path)));
+                cmds.emplace_back(std::format("/std:c++latest -fmodule-header -x c++-header {}", msvc::PathToCmdString(task.source.path)));
             } else Error("Attempted to compile header that isn't being exported as a header unit");
         }
         break;case SourceType::CppInterface: cmds.emplace_back(std::format("/std:c++latest -x c++-module {}", msvc::PathToCmdString(task.source.path)));
         break;default: Error("Cannot compile: unknown source type!");
     }
+
+    cmds.emplace_back("-MD");
 
     // cmd += " /Zc:preprocessor /utf-8 /DUNICODE /D_UNICODE /permissive- /Zc:__cplusplus";
     // cmds.emplace_back("/Zc:preprocessor /permissive-");
@@ -164,7 +166,7 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
             break;case SourceType::CppSource: cmds.emplace_back(std::format("/std:c++latest -x c++ {}", msvc::PathToCmdString(task.source.path)));
             break;case SourceType::CppHeader: {
                 if (task.is_header_unit) {
-                    cmds.emplace_back(std::format("/std:c++latest -x c++ -fmodule-header={}", msvc::PathToCmdString(task.source.path)));
+                    cmds.emplace_back(std::format("/std:c++latest -fmodule-header -x c++-header {}", msvc::PathToCmdString(task.source.path)));
                 } else Error("Attempted to compile header that isn't being exported as a header unit");
             }
             break;case SourceType::CppInterface: cmds.emplace_back(std::format("/std:c++latest -x c++-module {}", msvc::PathToCmdString(task.source.path)));
@@ -206,4 +208,9 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
             std::println("JSON write error ({}): {}", err.code, err.msg);
         }
     }
+}
+
+void ClangClBackend::LinkStep(Target& target, std::span<const Task> tasks) const
+{
+    msvc::LinkStep(target, tasks);
 }
