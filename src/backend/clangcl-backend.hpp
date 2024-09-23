@@ -2,7 +2,6 @@
 
 #include <core.hpp>
 
-#include "configuration.hpp"
 #include <backend/backend.hpp>
 
 struct ClangClBackend : Backend
@@ -15,5 +14,5 @@ struct ClangClBackend : Backend
     void AddTaskInfo(std::span<Task> tasks) const final;
     bool CompileTask(const Task& task) const final;
     void GenerateCompileCommands(std::span<const Task> tasks) const final;
-    void LinkStep(Target& target, std::span<const Task> tasks) const final;
+    bool LinkStep(Target& target, std::span<const Task> tasks) const final;
 };

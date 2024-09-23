@@ -3,7 +3,7 @@ import std;
 import std.compat;
 #endif
 
-#include <configuration.hpp>
+#include <build.hpp>
 #include <json.hpp>
 
 #ifndef HARMONY_USE_IMPORT_STD
@@ -13,11 +13,9 @@ import std.compat;
 #include <cstdint>
 #endif
 
-void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unordered_map<std::string, Target>& out_targets)
+void ParseConfig(std::string_view config, BuildState& state)
 {
     LogInfo("Generating initial build tasks");
-
-    uint32_t source_id = 0;
 
     auto deps_folder = fs::path(".deps");
     JsonDocument doc(config);
@@ -34,7 +32,7 @@ void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unorder
         LogTrace("target[{}]", name);
         LogTrace("  dir = {}", dir.string());
 
-        auto& out_target = out_targets[name];
+        auto& out_target = state.targets[name];
         out_target.name = name;
 
         for (auto source : in_target["sources"]) {
@@ -97,14 +95,42 @@ void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unorder
                 }()
             );
         }
+
+        if (auto in_git = in_target["git"]) {
+            auto& git = out_target.git.emplace();
+            if (in_git.string()) {
+                git.url = in_git.string();
+            } else {
+                git.url = in_git["url"].string();
+                if (auto branch = in_git["branch"]) {
+                    git.branch = branch.string();
+                }
+            }
+        }
+
+        if (auto in_download = in_target["download"]) {
+            auto& download = out_target.download.emplace();
+            download.url = in_download["url"].string();
+            if (auto type = in_download["type"].string()) {
+                if ("zip"sv == type) download.type = ArchiveType::Zip;
+                else Error("Unknown download type: {}", type);
+            }
+        }
+
+        if (auto in_cmake = in_target["cmake"]) {
+            auto& cmake = out_target.cmake.emplace();
+            for (auto option : in_cmake["options"]) {
+                cmake.options.emplace_back(option.string());
+            }
+        }
     }
+}
 
-    LogDebug("Parsed json config, expanding sources");
+void ExpandTargets(BuildState& state)
+{
+    uint32_t source_id = 0;
 
-    for (auto in_target :  doc.root()["targets"]) {
-        auto name = in_target["name"].string();
-        auto& target = out_targets.at(name);
-
+    for (auto&[_, target] : state.targets) {
         if (target.sources.empty()) continue;
 
         LogTrace("====");
@@ -136,7 +162,7 @@ void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unorder
             for (auto import_name : cur.import) {
                 LogTrace("  importing from [{}]", import_name);
                 try {
-                    auto& imported = out_targets.at(import_name);
+                    auto& imported = state.targets.at(import_name);
 
                     for (auto& include_dir : imported.include_dirs) {
                         LogTrace("    includes: {}", include_dir.string());
@@ -175,7 +201,7 @@ void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unorder
 
                 if (type == SourceType::Unknown) return;
 
-                auto& task = tasks.emplace_back();
+                auto& task = state.tasks.emplace_back();
                 task.target = &target;
                 task.source = { file, type, detected_type };
 
@@ -212,13 +238,7 @@ void ParseConfig(std::string_view config, std::vector<Task>& tasks, std::unorder
     }
 }
 
-std::string QuotedAbsPath(const fs::path& path)
-{
-    auto str = fs::absolute(path).string();
-    return std::format("\"{}\"", str);
-}
-
-void Fetch(std::string_view config, bool clean, bool update)
+void Fetch(BuildState& state, bool clean, bool update)
 {
     update |= clean;
 
@@ -232,8 +252,6 @@ void Fetch(std::string_view config, bool clean, bool update)
 
     auto deps_folder = fs::path(".deps");
     fs::create_directories(deps_folder);
-
-    JsonDocument doc(config);
 
     constexpr uint32_t stage_fetch = 0;
     constexpr uint32_t stage_unpack = 1;
@@ -253,31 +271,20 @@ void Fetch(std::string_view config, bool clean, bool update)
 
         std::vector<std::jthread> tasks;
 
-        for (auto target : doc.root()["targets"]) {
-            auto name = target["name"].string();
+        for (auto[name, target] : state.targets) {
             auto dir = deps_folder / name;
 
             auto task = [=, &cmake_do_build] {
+                if (auto& git = target.git) {
 
-                if (auto _git = target["git"]) {
                     if (stage == stage_fetch) {
-
-                        std::string url;
-                        std::optional<std::string> branch;
-                        if (_git.string()) {
-                            url = _git.string();
-                        } else {
-                            url = _git["url"].string();
-                            branch = _git["branch"].string();
-                        }
-
                         if (!fs::exists(dir)) {
                             LogDebug("Cloning into [{}]", dir.string());
 
                             std::string cmd;
-                            cmd += std::format("git clone {} --depth=1 --recursive", url);
-                            if (branch) {
-                                cmd += std::format(" --branch={}", *branch);
+                            cmd += std::format("git clone {} --depth=1 --recursive", git->url);
+                            if (git->branch) {
+                                cmd += std::format(" --branch={}", *git->branch);
                             }
                             cmd += std::format(" .deps/{}", name);
 
@@ -289,8 +296,8 @@ void Fetch(std::string_view config, bool clean, bool update)
 
                             std::string cmd;
                             cmd += std::format("cd {}", dir.string());
-                            if (branch) {
-                                cmd += std::format(" && git checkout {}", *branch);
+                            if (git->branch) {
+                                cmd += std::format(" && git checkout {}", *git->branch);
                             }
                             if (clean) {
                                 cmd += std::format(" && git reset --hard");
@@ -303,17 +310,14 @@ void Fetch(std::string_view config, bool clean, bool update)
                         }
                     }
 
-                } else if (auto download = target["download"]) {
-                    auto url = download["url"].string();
-                    auto type = download["type"].string();
-
+                } else if (auto& download = target.download) {
                     auto tmp_file = dir.string() + ".tmp";
 
                     if (!fs::exists(dir) || update) {
-                        LogInfo("Downloading [{}.tmp] <- [{}]", dir.string(), url);
+                        LogInfo("Downloading [{}.tmp] <- [{}]", dir.string(), download->url);
 
                         if (stage == stage_fetch) {
-                            auto cmd = std::format("curl -o {} {}", tmp_file, url);
+                            auto cmd = std::format("curl -o {} {}", tmp_file, download->url);
                             LogCmd(cmd);
                             std::system(cmd.c_str());
                         }
@@ -321,7 +325,7 @@ void Fetch(std::string_view config, bool clean, bool update)
                         if (stage == stage_unpack) {
                             LogInfo("Unpacking [{0}] <- [{0}.tmp]", dir.string());
 
-                            if (type && "zip"sv == type) {
+                            if (download->type == ArchiveType::Zip) {
                                 std::string cmd;
                                 cmd += std::format(" cd .deps && 7z x -y {0}.tmp -o{0}", name);
 
@@ -334,9 +338,7 @@ void Fetch(std::string_view config, bool clean, bool update)
                     }
                 }
 
-                if (auto cmake = target["cmake"]) {
-                    (void)cmake;
-
+                if (auto& cmake = target.cmake) {
                     auto cmake_build_dir = ".harmony-cmake-build";
 
                     auto profile = "RelWithDebInfo";
@@ -350,8 +352,8 @@ void Fetch(std::string_view config, bool clean, bool update)
                             cmd += std::format(" cd .deps/{}", name);
                             cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={0}/install -DCMAKE_BUILD_TYPE={1} -B {0}", cmake_build_dir, profile);
 
-                            for (auto option : cmake["options"]) {
-                                cmd += std::format(" -D{}", option.string());
+                            for (auto option : cmake->options) {
+                                cmd += std::format(" -D{}", option);
                             }
 
                             LogCmd(cmd);

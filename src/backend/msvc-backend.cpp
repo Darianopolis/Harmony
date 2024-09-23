@@ -5,7 +5,6 @@ import std.compat;
 
 #include "msvc-backend.hpp"
 #include "msvc-common.hpp"
-#include "configuration.hpp"
 
 #ifndef HARMONY_USE_IMPORT_STD
 #include <cstdlib>
@@ -134,7 +133,7 @@ bool MsvcBackend::CompileTask(const Task& task) const
     return std::system(cmd.c_str()) == 0;
 }
 
-void MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
+bool MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 {
-    msvc::LinkStep(target, tasks);
+    return msvc::LinkStep(target, tasks);
 }

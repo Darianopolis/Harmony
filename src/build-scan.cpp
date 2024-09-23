@@ -33,7 +33,7 @@ bool wsnl(char c)
 
 ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*, Component&), void* payload)
 {
-    // TODO: Handle comments and strings
+    // TODO: Handle strings
     // TODO: Handle basic preprocessor evaluation
     //          #ifndef THING
     //          #if [!]THING
@@ -70,27 +70,63 @@ ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)
         return false;
     };
 
+    auto SkipToEndOfLine = [&] {
+        for (;;) {
+            while (!nl(*c)) peek_false(c++);
+            // if not escaped break immediately
+            auto last = *(c++ - 1);
+            // check and fully escape crlf
+            if (*(c - 1) == '\r' && *c == '\n') c++;
+            if (last != '\\') break;
+            log_trace("new line escape, continuing...");
+        }
+    };
+
+    auto SkipWhitespaceAndCommments = [&](const std::source_location& loc = std::source_location::current()) {
+        for (;;) {
+            peek_false(c, loc);
+            if (*c == '/') {
+                if (*(c + 1) == '/') {
+                    log_trace("Found single line comment, skipping to end of line");
+                    SkipToEndOfLine();
+                    continue;
+                } else if (*(c + 1) == '*') {
+                    log_trace("Found multi-line comment, skipping to closing comment");
+                    c += 2;
+                    for (;;) {
+                        peek_false(c);
+                        if (*c == '*') {
+                            if (*(c + 1) == '/') {
+                                break;
+                            }
+                        }
+                        c++;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if (!ws(*c)) break;
+
+            c++;
+        }
+    };
+
     std::string_view primary_module_name;
 
     while (c != e) {
         if (c > e)
             Error("Overrun buffer!");
 
-        peek_false(c);
+        SkipWhitespaceAndCommments();
 
         if (*c == '#') {
             while (ws(*++c));
             log_trace("Checking for 'include' directive [{}]", std::string_view(c, c + 7));
             if (std::string_view(c, c + 7) != "include") {
                 log_trace("  not found, skipping to next unescaped newline");
-                // Skip any preprocessors other than include
-                for (;;) {
-                    while (!nl(*c)) peek_false(c++);
-                    // if not escaped break immediately
-                    if (*(c++ - 1) != '\\') break;
-                    // check and fully escape crlf
-                    if (*(c - 1) == '\r' && *c == '\n') c++;
-                };
+                SkipToEndOfLine();
                 log_trace("  reached end of preprocessor statement");
                 continue;
             }
@@ -140,7 +176,8 @@ ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)
                 ++c; continue;
             }
             peek_false(c);
-            while (wsnl(*++c) || peek_false(c));
+            ++c;
+            SkipWhitespaceAndCommments();
             peek_false(c);
             if (*c == ';') {
                 // Global module fragment, ignore
@@ -157,7 +194,7 @@ ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)
                     while (*++c != '"');
                 }
                 name_end = c;
-                while (wsnl(*++c));
+                ++c; SkipWhitespaceAndCommments();
                 if (*c != ';') {
                     log_trace("Expected semicolon to end import statement, found {}", *c);
                     continue;
@@ -176,11 +213,11 @@ ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)
                 name_end = c;
                 log_trace("end of name: [{}]", std::string_view(name_start, name_end));
                 peek_false(c);
-                while (wsnl(*c)) c++;
+                SkipWhitespaceAndCommments();
                 peek_false(c);
                 if (*c == ':') {
                     log_trace("parsing partition name");
-                    while (wsnl(*++c));
+                    ++c; SkipWhitespaceAndCommments();
                     part_start = c;
                     while (peek_false(c) || IsIdentifierChar(*c)) c++;
                     part_end = c;
@@ -190,7 +227,7 @@ ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)
                     // start of private module fragment, ignore
                     continue;
                 }
-                while (wsnl(*c)) c++;
+                SkipWhitespaceAndCommments();
                 peek_false(c);
                 if (*c != ';') {
                     log_trace("Expected semicolon, not valid module statement");
@@ -220,7 +257,7 @@ ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)
             if (is_header_unit) {
                 LogTrace("{}import {}{}{};", is_exported ? "export " : "", angled ? '<' : '"', name, angled ? '>' : '"');
             } else {
-                LogTrace("{}{} {}{}{};", is_exported ? "export " : "", is_imported ? "import" : "module", name, part.empty() ? "" : ":", part);
+                LogTrace("{}{} {}{}{};", is_exported ? "export " : "", is_imported ? "import" : "module", name, part.empty() ? "" : "<:>", part);
             }
             if (is_imported && !part.empty() && name != primary_module_name) {
                 LogError("Module partition does not belong to primary module: [{}]", primary_module_name);

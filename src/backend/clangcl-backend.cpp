@@ -8,7 +8,6 @@ import std.compat;
 
 #include "clangcl-backend.hpp"
 #include "msvc-common.hpp"
-#include "configuration.hpp"
 
 #ifndef HARMONY_USE_IMPORT_STD
 #include <cstdlib>
@@ -54,7 +53,6 @@ void ClangClBackend::FindDependencies(const Task& task, std::string& dependency_
     }
 }
 
-// TODO: This is shared with the MSVC backend
 void ClangClBackend::GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) const
 {
     msvc::GenerateStdModuleTasks(std_task, std_compat_task);
@@ -210,7 +208,7 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
     }
 }
 
-void ClangClBackend::LinkStep(Target& target, std::span<const Task> tasks) const
+bool ClangClBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 {
-    msvc::LinkStep(target, tasks);
+    return msvc::LinkStep(target, tasks);
 }

@@ -17,8 +17,9 @@ import std.compat;
 #endif
 
 #include <json.hpp>
+#include <backend//backend.hpp>
 
-void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& targets, const Backend& backend)
+void Build(BuildState& state, bool use_backend_dependency_scan)
 {
     fs::create_directories(BuildDir);
 
@@ -26,15 +27,14 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     std::unordered_map<fs::path, std::string> marked_header_units;
 
-    bool use_backend_dependency_scan = false;
     auto backend_scan_differences = 0;
 
     std::vector<std::string> dependency_info;
     if (use_backend_dependency_scan) {
-        dependency_info.resize(tasks.size());
+        dependency_info.resize(state.tasks.size());
 #pragma omp parallel for
-        for (uint32_t i = 0; i < tasks.size(); ++i) {
-            backend.FindDependencies(tasks[i], dependency_info[i]);
+        for (uint32_t i = 0; i < state.tasks.size(); ++i) {
+            state.backend->FindDependencies(state.tasks[i], dependency_info[i]);
         }
     }
 
@@ -42,8 +42,8 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
         std::string data;
         std::unordered_map<std::string, int> produced_set;
         std::unordered_map<std::string, int> required_set;
-        for (auto i = 0; i < tasks.size(); ++i) {
-            auto& task = tasks[i];
+        for (auto i = 0; i < state.tasks.size(); ++i) {
+            auto& task = state.tasks[i];
             LogDebug("Scanning file: [{}]", task.source.path.string());
 
             if (use_backend_dependency_scan) {
@@ -91,6 +91,8 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                 data[size] = '\n';
                 data[size + 1] = '"';
                 data[size + 2] = '>';
+                data[size + 3] = '*';
+                data[size + 4] = '/';
             }
 
             auto scan_result = ScanFile(task.source.path, data, [&](Component& comp) {
@@ -145,7 +147,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
     std_target.name = "std";
     {
         std::optional<Task> std_task, std_compat_task;
-        for (auto& task : tasks) {
+        for (auto& task : state.tasks) {
             for (auto& depends_on : task.depends_on) {
                 if (depends_on.name == "std") {
                     if (!std_task) {
@@ -180,16 +182,16 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
             }
         }
 
-        backend.GenerateStdModuleTasks(
+        state.backend->GenerateStdModuleTasks(
             std_task ? &*std_task : nullptr,
             std_compat_task ? &*std_compat_task : nullptr);
-        if (std_task) tasks.emplace_back(std::move(*std_task));
-        if (std_compat_task) tasks.emplace_back(std::move(*std_compat_task));
+        if (std_task) state.tasks.emplace_back(std::move(*std_task));
+        if (std_compat_task) state.tasks.emplace_back(std::move(*std_compat_task));
     }
 
     LogDebug("Marking header units");
 
-    for (auto& task : tasks) {
+    for (auto& task : state.tasks) {
         auto path = fs::absolute(task.source.path);
         auto iter = marked_header_units.find(path);
         if (iter == marked_header_units.end()) continue;
@@ -203,7 +205,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     // TODO: This should be a separate stage launched by cli.cpp
     {
-        GenerateCMake(".", tasks, targets);
+        GenerateCMake(".", state.tasks, state.targets);
     }
 
     LogDebug("Generating external header unit tasks");
@@ -213,7 +215,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
         for (auto[path, logical_name] : marked_header_units) {
             LogTrace("external header unit[{}] -> {}", path.string(), logical_name);
 
-            auto& task = tasks.emplace_back();
+            auto& task = state.tasks.emplace_back();
             task.source.path = path;
             task.source.type = SourceType::CppHeader;
             task.is_header_unit = true;
@@ -226,7 +228,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     LogDebug("Trimming normal header tasks");
 
-    std::erase_if(tasks, [](const auto& task) {
+    std::erase_if(state.tasks, [](const auto& task) {
         if (!task.is_header_unit && task.source.type == SourceType::CppHeader) {
             LogTrace("Header [{}] is not consumed as a header unit", task.unique_name);
             return true;
@@ -238,7 +240,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     {
         auto FindTaskForProduced = [&](std::string_view name) -> Task* {
-            for (auto& task : tasks) {
+            for (auto& task : state.tasks) {
                 for (auto& produced : task.produces) {
                     if (produced == name) return &task;
                 }
@@ -246,7 +248,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
             return nullptr;
         };
 
-        for (auto& task : tasks) {
+        for (auto& task : state.tasks) {
             for (auto& depends_on : task.depends_on) {
                 auto* depends_on_task = FindTaskForProduced(depends_on.name);
                 if (!depends_on_task) {
@@ -279,7 +281,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
         {
             uint32_t max_depth  = 0;
-            for (auto& task : tasks) {
+            for (auto& task : state.tasks) {
                 max_depth = std::max(max_depth, FindMaxDepth(task));
             }
         }
@@ -307,7 +309,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
             uint32_t max_depth = 0;
             const Task* max_task = nullptr;
 
-            for (auto& task : tasks) {
+            for (auto& task : state.tasks) {
                 if (cache.at(&task) >= max_depth) {
                     max_depth = cache.at(&task);
                     max_task = &task;
@@ -323,7 +325,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     LogDebug("Filling in backend task info");
 
-    backend.AddTaskInfo(tasks);
+    state.backend->AddTaskInfo(state.tasks);
 
     LogDebug("Validating dependencies");
 
@@ -333,7 +335,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     // Filter on immediate file changes
 
-    for (auto& task : tasks) {
+    for (auto& task : state.tasks) {
         // TODO: Filter for *all* tasks unless -clean specified
         // if (!task.external) continue;
         // if (task.target->name == "panta-rhei" || task.target->name == "propolis") continue;
@@ -376,7 +378,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
             return false;
         };
 
-        for (auto& task : tasks) {
+        for (auto& task : state.tasks) {
             CheckForUpdateRequired(task);
         }
     }
@@ -393,7 +395,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
     } stats;
 
     // Record num of skipped tasks for build stats
-    for (auto& task : tasks) {
+    for (auto& task : state.tasks) {
         if (task.state == TaskState::Complete) stats.skipped++;
         else if (task.state == TaskState::Waiting) stats.to_compile++;
     }
@@ -428,7 +430,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
             }
             last_num_complete = _num_complete;
 
-            for (auto& task : tasks) {
+            for (auto& task : state.tasks) {
                 auto cur_state = std::atomic_ref(task.state).load();
                 if (cur_state == TaskState::Complete || cur_state == TaskState::Failed) continue;
 
@@ -447,8 +449,8 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                 launched++;
 
                 task.state = TaskState::Compiling;
-                auto DoCompile = [&backend, &task, &num_complete] {
-                    auto success = backend.CompileTask(task);
+                auto DoCompile = [&state, &task, &num_complete] {
+                    auto success = state.backend->CompileTask(task);
 
                     std::atomic_ref(task.state) = success ? TaskState::Complete : TaskState::Failed;
 
@@ -480,7 +482,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                     && _num_started == _num_complete
                     && launched == 0) {
                 uint32_t num_errors = 0;
-                for (auto& task : tasks) {
+                for (auto& task : state.tasks) {
                     if (task.state == TaskState::Failed) num_errors++;
                 }
                 if (num_errors) {
@@ -489,7 +491,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
                 }
 
                 LogError("Unable to start any additional tasks");
-                for (auto& task : tasks) {
+                for (auto& task : state.tasks) {
                     if (task.state == TaskState::Complete) continue;
                     LogError("task[{}] blocked", task.source.path.string());
                     for (auto& dep : task.depends_on) {
@@ -512,7 +514,7 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
     {
         uint32_t num_complete = 0;
-        for (auto& task : tasks) {
+        for (auto& task : state.tasks) {
             if (task.state == TaskState::Complete) num_complete++;
             else if (task.state == TaskState::Failed) stats.failed++;
         }
@@ -533,10 +535,14 @@ void Build(std::vector<Task>& tasks, std::unordered_map<std::string, Target>& ta
 
         LogInfo("Linking target executables");
 
-        for (auto&[_, target] : targets) {
+        for (auto&[_, target] : state.targets) {
             if (!target.executable) continue;
 
-            backend.LinkStep(target, tasks);
+            LogInfo("Linking [{}] from [{}]", target.executable->path.string(), target.name);
+            auto res = state.backend->LinkStep(target, state.tasks);
+            if (!res) {
+                LogError("Error linking [{}] from [{}]", target.executable->path.string(), target.name);
+            }
         }
     }
 }

@@ -4,7 +4,6 @@ import std.compat;
 #endif
 
 #include <build.hpp>
-#include <configuration.hpp>
 
 #include <backend/msvc-backend.hpp>
 #include <backend/clangcl-backend.hpp>
@@ -27,10 +26,16 @@ int main(int argc, char* argv[]) try
 
     auto PrintUsage = [] {
         LogInfo(R"(Usage: [build file] <flags...>
- -fetch         :: Check for dependency updates
- -clean-deps    :: Clean fetch and build all dependencies
- -log-[level]   :: Set log level (trace, debug, info *default*, warn, error)
- -wait-on-close :: Require enter press to close (for debugging purposes)
+ -fetch              :: Check for dependency updates
+ -clean-deps         :: Clean fetch and build all dependencies
+
+ -log-[level]        :: Set log level (trace, debug, info *default*, warn, error)
+ -wait-on-close      :: Require enter press to close (for debugging purposes)
+
+ -clang              :: Use the clang backend
+ -msvc               :: Use the msvc backend
+
+ -toolchain-dep-scan :: Use the toolchain (msvc, clang) provided dependency scan to verify dependencies
 )");
         throw HarmonySilentException{};
     };
@@ -39,6 +44,9 @@ int main(int argc, char* argv[]) try
         PrintUsage();
     }
 
+    // TODO: This should be in profile configuration
+    bool use_clang = false;
+    bool use_backend_dependency_scan = false;
     bool fetch_dependencies = false;
     bool clean_dependencies = false;
     for (int i = 2; i < argc; ++i) {
@@ -54,6 +62,12 @@ int main(int argc, char* argv[]) try
         else if ("-log-error"sv == argv[i]) log_level = LogLevel::Error;
         // CLion external terminal utilities
         else if ("-wait-on-close"sv == argv[i]) wait_on_close = true;
+        // Use clang
+        else if ("-clang"sv == argv[i]) use_clang = true;
+        // Use msvc (default)
+        else if ("-msvc"sv == argv[i]) use_clang = false;
+        // Use vendor dependency scan
+        else if ("-toolchain-dep-scan"sv == argv[i]) use_backend_dependency_scan = true;
         // Unknown switch
         else {
             LogError("Unknown switch: {}", argv[i]);
@@ -63,25 +77,32 @@ int main(int argc, char* argv[]) try
 
     auto config = ReadFileToString(argv[1]);
 
-    Fetch(config, clean_dependencies, fetch_dependencies);
+    BuildState state;
+    std::unique_ptr<Backend> backend;
+    if (use_clang) {
+        backend = std::make_unique<ClangClBackend>();
+    } else {
+        backend = std::make_unique<MsvcBackend>();
+    }
+    state.backend = backend.get();
 
-    std::unordered_map<std::string, Target> targets;
-    std::vector<Task> tasks;
-    ParseConfig(config, tasks, targets);
-
-    MsvcBackend backend;
-    // ClangClBackend backend;
-    Build(tasks, targets, backend);
+    ParseConfig(config, state);
+    Fetch(state, clean_dependencies, fetch_dependencies);
+    ExpandTargets(state);
+    Build(state, use_backend_dependency_scan);
 
     // HARMONY_IGNORE(argc, argv)
     //
     // log_level = LogLevel::Trace;
     // wait_on_close = true;
     //
-    // fs::path path = "D:/Dev/Cloned-Temp/Propolis/Source/Casts/Casts.ixx";
+    // fs::path path = "D:/Dev/Projects/harmony/src/generators/cmake-generator.cpp";
     // std::string data;
     // {
     //     std::ifstream in(path, std::ios::binary);
+    //     if (!in.is_open()) {
+    //         Error("Could not open file!");
+    //     }
     //     auto size = fs::file_size(path);
     //     data.resize(size + 16, '\0');
     //     in.read(data.data(), size);
@@ -89,6 +110,8 @@ int main(int argc, char* argv[]) try
     //     data[size] = '\n';
     //     data[size + 1] = '"';
     //     data[size + 2] = '>';
+    //     data[size + 3] = '*';
+    //     data[size + 4] = '/';
     // }
     //
     // LogDebug("Scanning file: [{}]", path.string());

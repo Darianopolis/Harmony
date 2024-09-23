@@ -1,6 +1,5 @@
 #pragma once
 
-#include "configuration.hpp"
 #include <backend/backend.hpp>
 
 struct MsvcBackend : Backend
@@ -12,5 +11,5 @@ struct MsvcBackend : Backend
     void GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) const final;
     void AddTaskInfo(std::span<Task> tasks) const final;
     bool CompileTask(const Task& task) const final;
-    void LinkStep(Target& target, std::span<const Task> tasks) const final;
+    bool LinkStep(Target& target, std::span<const Task> tasks) const final;
 };

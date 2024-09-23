@@ -12,5 +12,5 @@ namespace msvc
 
     void GenerateStdModuleTasks(Task* std_task, Task* std_compat_task);
 
-    void LinkStep(Target& target, std::span<const Task> tasks);
+    bool LinkStep(Target& target, std::span<const Task> tasks);
 }

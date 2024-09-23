@@ -154,7 +154,7 @@ namespace msvc
 
 namespace msvc
 {
-    void LinkStep(Target& target, std::span<const Task> tasks)
+    bool LinkStep(Target& target, std::span<const Task> tasks)
     {
         auto build_dir = BuildDir;
 
@@ -217,6 +217,6 @@ namespace msvc
 
         LogCmd(cmd);
 
-        std::system(cmd.c_str());
+        return std::system(cmd.c_str()) == 0;
     }
 }

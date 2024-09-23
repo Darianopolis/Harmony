@@ -4,7 +4,7 @@ set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
         # `Help/dev/experimental.rst` in the CMake source corresponding to
         # your CMake build for the exact value to use.
         "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
-project(harmony LANGUAGES CXX C)
+project(Harmony LANGUAGES CXX C)
 set(CMAKE_CXX_MODULE_STD 1)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -14,20 +14,32 @@ add_compile_options(
         /utf-8
         /openmp:llvm)
 # ----------------------------------------------------------------------------------------------------------------------
-#       Dependencies
+#       Third Party - yyjson
 # ----------------------------------------------------------------------------------------------------------------------
 include(FetchContent)
 fetchcontent_declare(yyjson
         GIT_REPOSITORY https://github.com/ibireme/yyjson.git)
 fetchcontent_makeavailable(yyjson)
+# ----------------------------------------------------------------------------------------------------------------------
+#       Third Party - xxhash
+# ----------------------------------------------------------------------------------------------------------------------
 fetchcontent_declare(xxhash
         GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
         GIT_TAG origin/dev)
 fetchcontent_makeavailable(xxhash)
+add_library(xxhash)
+target_sources(xxhash
+        PUBLIC
+        ${xxhash_SOURCE_DIR}/xxhash.c)
+target_include_directories(xxhash
+        PUBLIC
+        ${xxhash_SOURCE_DIR})
 # ----------------------------------------------------------------------------------------------------------------------
 #       Harmony
 # ----------------------------------------------------------------------------------------------------------------------
-add_executable(harmony
+add_executable(harmony)
+target_sources(harmony
+        PUBLIC
         src/backend/clangcl-backend.cpp
         src/backend/msvc-backend.cpp
         src/build-scan.cpp
@@ -38,20 +50,18 @@ add_executable(harmony
         src/json.cpp
         src/backend/msvc-common.cpp
         src/log.cpp
-        ${xxhash_SOURCE_DIR}/xxhash.c
         src/generators/cmake-generator.hpp
         src/generators/cmake-generator.cpp)
 target_include_directories(harmony
         PRIVATE
-        src
-        ${yyjson_SOURCE_DIR}/src
-        ${xxhash_SOURCE_DIR})
+        src)
 target_link_libraries(harmony
         PUBLIC
-        yyjson)
+        yyjson
+        xxhash)
 set_target_properties(harmony PROPERTIES LINKER_LANGUAGE CXX)
-add_custom_command(TARGET harmony POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:harmony>
-        ${CMAKE_SOURCE_DIR}/out/harmony.exe)
+add_custom_command(TARGET harmony POST_BUILD COMMAND
+        ${CMAKE_COMMAND} -E copy $<TARGET_FILE:harmony> ${CMAKE_SOURCE_DIR}/out/harmony.exe)
 # ----------------------------------------------------------------------------------------------------------------------
 #       Test
 # ----------------------------------------------------------------------------------------------------------------------
@@ -63,5 +73,5 @@ target_sources(test
         FILE_SET CXX_MODULES TYPE CXX_MODULES FILES
         test/other.ixx)
 set_target_properties(test PROPERTIES LINKER_LANGUAGE CXX)
-add_custom_command(TARGET test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:test>
-        ${CMAKE_SOURCE_DIR}/out/test.exe)
+add_custom_command(TARGET test POST_BUILD COMMAND
+        ${CMAKE_COMMAND} -E copy $<TARGET_FILE:test> ${CMAKE_SOURCE_DIR}/out/test.exe)

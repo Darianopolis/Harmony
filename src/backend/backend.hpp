@@ -1,7 +1,7 @@
 #pragma once
 
 #include <core.hpp>
-#include <configuration.hpp>
+#include <build.hpp>
 
 #ifndef HARMONY_USE_IMPORT_STD
 #include <span>
@@ -35,7 +35,7 @@ struct Backend {
         Error("CompileTask is not implemented");
     }
 
-    virtual void LinkStep(Target& target, std::span<const Task> tasks) const
+    virtual bool LinkStep(Target& target, std::span<const Task> tasks) const
     {
         HARMONY_IGNORE(target, tasks)
         Error("LinkStep is not implemented");
