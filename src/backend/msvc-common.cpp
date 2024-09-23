@@ -129,23 +129,20 @@ namespace msvc
     {
         EnsureVisualStudioEnvironment();
 
-        auto tools_dir = GetVisualStudioStdModulesDir();
-        auto module_file = tools_dir / "std.ixx";
+        auto modules_dir = GetVisualStudioStdModulesDir();
 
-        LogDebug("Modules file path: {}", module_file.string());
-
-        if (!fs::exists(module_file)) {
-            Error("std.ixx not found. Please install the C++ Modules component for Visual Studio");
+        if (!fs::exists(modules_dir)) {
+            Error("VS modules dir not found. Please install the C++ Modules component for Visual Studio");
         }
 
-        LogDebug("std module path: {}", module_file.string());
+        LogTrace("Found std modules in [{}]", modules_dir.string());
 
         if (std_task) {
-            std_task->source.path = module_file;
+            std_task->source.path = modules_dir / "std.ixx";
         }
 
         if (std_compat_task) {
-            std_compat_task->source.path = tools_dir / "std.compat.ixx";
+            std_compat_task->source.path = modules_dir / "std.compat.ixx";
         }
     }
 }

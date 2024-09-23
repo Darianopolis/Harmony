@@ -4,6 +4,7 @@ import std.compat;
 #endif
 
 #include <build.hpp>
+#include <generators/cmake-generator.hpp>
 
 #include <backend/msvc-backend.hpp>
 #include <backend/clangcl-backend.hpp>
@@ -77,6 +78,7 @@ int main(int argc, char* argv[]) try
 
     auto config = ReadFileToString(argv[1]);
 
+    fs::create_directories(BuildDir);
     BuildState state;
     std::unique_ptr<Backend> backend;
     if (use_clang) {
@@ -86,10 +88,17 @@ int main(int argc, char* argv[]) try
     }
     state.backend = backend.get();
 
-    ParseConfig(config, state);
-    Fetch(state, clean_dependencies, fetch_dependencies);
+    // TODO: This is only required because targets require memory stability after ExpandTargets right now!
+    //       store targets via pointers or use indices
+    state.targets["std"].name = "std";
+
+    ParseTargetsFile(state, config);
+    FetchExternalData(state, clean_dependencies, fetch_dependencies);
     ExpandTargets(state);
-    Build(state, use_backend_dependency_scan);
+    ScanDependencies(state, use_backend_dependency_scan);
+    DetectAndInsertStdModules(state);
+    GenerateCMake(state, ".");
+    Build(state);
 
     // HARMONY_IGNORE(argc, argv)
     //
@@ -98,21 +107,6 @@ int main(int argc, char* argv[]) try
     //
     // fs::path path = "D:/Dev/Projects/harmony/src/generators/cmake-generator.cpp";
     // std::string data;
-    // {
-    //     std::ifstream in(path, std::ios::binary);
-    //     if (!in.is_open()) {
-    //         Error("Could not open file!");
-    //     }
-    //     auto size = fs::file_size(path);
-    //     data.resize(size + 16, '\0');
-    //     in.read(data.data(), size);
-    //     std::memset(data.data() + size, '\n', 16);
-    //     data[size] = '\n';
-    //     data[size + 1] = '"';
-    //     data[size + 2] = '>';
-    //     data[size + 3] = '*';
-    //     data[size + 4] = '/';
-    // }
     //
     // LogDebug("Scanning file: [{}]", path.string());
     // ScanFile(path, data, [](Component&){});

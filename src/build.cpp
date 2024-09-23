@@ -5,8 +5,6 @@ import std.compat;
 
 #include "build.hpp"
 
-#include <generators/cmake-generator.hpp>
-
 #ifndef HARMONY_USE_IMPORT_STD
 #include <print>
 #include <string_view>
@@ -16,134 +14,13 @@ import std.compat;
 #include <fstream>
 #endif
 
-#include <json.hpp>
-#include <backend//backend.hpp>
+#include <backend/backend.hpp>
 
-void Build(BuildState& state, bool use_backend_dependency_scan)
+void DetectAndInsertStdModules(BuildState& state)
 {
-    fs::create_directories(BuildDir);
+    LogInfo("Checking for standard modules");
 
-    LogDebug("Getting dependency info");
-
-    std::unordered_map<fs::path, std::string> marked_header_units;
-
-    auto backend_scan_differences = 0;
-
-    std::vector<std::string> dependency_info;
-    if (use_backend_dependency_scan) {
-        dependency_info.resize(state.tasks.size());
-#pragma omp parallel for
-        for (uint32_t i = 0; i < state.tasks.size(); ++i) {
-            state.backend->FindDependencies(state.tasks[i], dependency_info[i]);
-        }
-    }
-
-    {
-        std::string data;
-        std::unordered_map<std::string, int> produced_set;
-        std::unordered_map<std::string, int> required_set;
-        for (auto i = 0; i < state.tasks.size(); ++i) {
-            auto& task = state.tasks[i];
-            LogDebug("Scanning file: [{}]", task.source.path.string());
-
-            if (use_backend_dependency_scan) {
-                produced_set.clear();
-                required_set.clear();
-
-                LogDebug("  Backend results:");
-
-                JsonDocument doc(dependency_info[i]);
-                for (auto rule : doc.root()["rules"]) {
-                    for (auto provided : rule["provides"]) {
-                        auto logical_name = provided["logical-name"].string();
-                        produced_set[logical_name]++;
-                        LogTrace("produces module [{}]", logical_name);
-                        task.produces.emplace_back(logical_name);
-                    }
-
-                    for (auto required : rule["requires"]) {
-                        auto logical_name = required["logical-name"].string();
-                        required_set[logical_name]++;
-                        // LogTrace("  requires: {}", logical_name);
-                        task.depends_on.emplace_back(Dependency{.name = std::string(logical_name)});
-                        if (auto source_path = required["source-path"]) {
-                            auto path = fs::path(source_path.string());
-                            // LogTrace("    is header unit - {}", path.string());
-                            marked_header_units[path] = logical_name;
-                            LogTrace("requires header [{}]", path.string());
-                        } else {
-                            LogTrace("requires module [{}]", logical_name);
-                        }
-                    }
-                }
-
-                LogDebug("  build-deps results:");
-            }
-
-            {
-                std::ifstream in(task.source.path, std::ios::binary | std::ios::ate);
-                auto size = fs::file_size(task.source.path);
-                in.seekg(0);
-                data.resize(size + 16, '\0');
-                in.read(data.data(), size);
-                std::memset(data.data() + size, '\n', 16);
-                // TODO: This should be handled in ScanFile
-                data[size] = '\n';
-                data[size + 1] = '"';
-                data[size + 2] = '>';
-                data[size + 3] = '*';
-                data[size + 4] = '/';
-            }
-
-            auto scan_result = ScanFile(task.source.path, data, [&](Component& comp) {
-                if (!comp.imported && comp.exported) {
-                    if (use_backend_dependency_scan) {
-                        produced_set[comp.name]--;
-                    } else {
-                        task.produces.emplace_back(std::move(comp.name));
-                    }
-                } else {
-                    if (use_backend_dependency_scan) {
-                        required_set[comp.name]--;
-                    } else {
-                        task.depends_on.emplace_back(Dependency{.name = std::move(comp.name)});
-                    }
-                }
-            });
-
-            task.unique_name = scan_result.unique_name;
-
-            if (use_backend_dependency_scan) {
-                for (auto&[r, s] : produced_set) {
-                    if (s > 0) {
-                        backend_scan_differences++;
-                        LogError("MSVC produces [{}] not found by build-scan", r);
-                    } else if (s < 0) {
-                        backend_scan_differences++;
-                        LogError("Found produces [{}] not present in MSVC output", r);
-                    }
-                }
-
-                for (auto&[p, s] : required_set) {
-                    if (s > 0) {
-                        backend_scan_differences++;
-                        LogError("MSVC requires [{}] not found by build-scan", p);
-                    } else if (s < 0) {
-                        backend_scan_differences++;
-                        LogError("build-scan requires [{}] not present in MSVC output", p);
-                    }
-                }
-            }
-        }
-
-        if (backend_scan_differences) {
-            Error("Discrepancy between backend and build-scan outputs, aborting compilation");
-        }
-    }
-
-    LogDebug("Defining std modules");
-
-    Target std_target;
+    auto& std_target = state.targets.at("std");
     std_target.name = "std";
     {
         std::optional<Task> std_task, std_compat_task;
@@ -151,7 +28,7 @@ void Build(BuildState& state, bool use_backend_dependency_scan)
             for (auto& depends_on : task.depends_on) {
                 if (depends_on.name == "std") {
                     if (!std_task) {
-                        LogInfo("Detected usage of [std] module");
+                        LogDebug("Detected usage of [std] module");
                         std_task = Task {
                             .target = &std_target,
                             .source{.type = SourceType::CppInterface},
@@ -166,7 +43,7 @@ void Build(BuildState& state, bool use_backend_dependency_scan)
 
                 if (depends_on.name == "std.compat") {
                     if (!std_compat_task) {
-                        LogInfo("Detected usage of [std.compat] module");
+                        LogDebug("Detected usage of [std.compat] module");
                         std_compat_task = Task {
                             .target = &std_target,
                             .source{.type = SourceType::CppInterface},
@@ -188,43 +65,11 @@ void Build(BuildState& state, bool use_backend_dependency_scan)
         if (std_task) state.tasks.emplace_back(std::move(*std_task));
         if (std_compat_task) state.tasks.emplace_back(std::move(*std_compat_task));
     }
+}
 
-    LogDebug("Marking header units");
-
-    for (auto& task : state.tasks) {
-        auto path = fs::absolute(task.source.path);
-        auto iter = marked_header_units.find(path);
-        if (iter == marked_header_units.end()) continue;
-        task.is_header_unit = true;
-        task.produces.emplace_back(iter->second);
-
-        LogTrace("task[{}].is_header_unit = {}", task.source.path.string(), task.is_header_unit);
-
-        marked_header_units.erase(path);
-    }
-
-    // TODO: This should be a separate stage launched by cli.cpp
-    {
-        GenerateCMake(".", state.tasks, state.targets);
-    }
-
-    LogDebug("Generating external header unit tasks");
-
-    {
-        uint32_t ext_header_uid = 0;
-        for (auto[path, logical_name] : marked_header_units) {
-            LogTrace("external header unit[{}] -> {}", path.string(), logical_name);
-
-            auto& task = state.tasks.emplace_back();
-            task.source.path = path;
-            task.source.type = SourceType::CppHeader;
-            task.is_header_unit = true;
-            task.produces.emplace_back(logical_name);
-            task.external = true;
-
-            task.unique_name = std::format("{}.{}E", path.filename().string(), ext_header_uid++);
-        }
-    }
+void Build(BuildState& state)
+{
+    LogInfo("Building");
 
     LogDebug("Trimming normal header tasks");
 
@@ -323,13 +168,11 @@ void Build(BuildState& state, bool use_backend_dependency_scan)
         }
     }
 
+    // TODO: Check for illegal cycles (both in modules and includes)
+
     LogDebug("Filling in backend task info");
 
     state.backend->AddTaskInfo(state.tasks);
-
-    LogDebug("Validating dependencies");
-
-    // TODO: Check for illegal cycles (both in modules and includes)
 
     LogDebug("Filtering up-to-date tasks");
 

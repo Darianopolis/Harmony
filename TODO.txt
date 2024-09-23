@@ -1,4 +1,7 @@
 Functionality
+
+- Remove "tasks" from early build steps
+  - Create intermediate Source representation (post expansion, pre task distribution)
 - Improve dependency scanning
   - Add basic preprocessor parsing
     - The following should be enough for most (sane) module declarations/imports
@@ -9,13 +12,14 @@ Functionality
   - Evaluate full paths for include/imported headers
 - Lazy compilation
   - Use headers from dependency scanning to detect changes in tracked included headers
+
 - Add "source sets" to targets
   - private defines and includes are applied directly to source sets
 - Separate target data source from target config
   - E.g. dependencies with multiple targets should be able to use same fetched git repo
+- Improve CMake config support
+  - add include and link properties that automatically track to generated cmake build folder
 
-- Remove "tasks" from early build steps
-  - Create intermediate Source representation (post expansion, pre task distribution)
 - Implement proper job system that limits the number of running jobs
 - Clean up process execution
   - Use platform process creation instead of std::system
@@ -33,6 +37,8 @@ Functionality
 - Configuration in Lua
 
 Code Maintenance
+
 - Separate out C++ specific code from general utilities
   - Move core of Harmony to be target language agnostic
+
 - Wrap JSON writing

@@ -13,9 +13,9 @@ import std.compat;
 #include <cstdint>
 #endif
 
-void ParseConfig(std::string_view config, BuildState& state)
+void ParseTargetsFile(BuildState& state, std::string_view config)
 {
-    LogInfo("Generating initial build tasks");
+    LogInfo("Parsing targets file");
 
     auto deps_folder = fs::path(".deps");
     JsonDocument doc(config);
@@ -128,6 +128,8 @@ void ParseConfig(std::string_view config, BuildState& state)
 
 void ExpandTargets(BuildState& state)
 {
+    LogInfo("Expanding targets");
+
     uint32_t source_id = 0;
 
     for (auto&[_, target] : state.targets) {
@@ -238,8 +240,10 @@ void ExpandTargets(BuildState& state)
     }
 }
 
-void Fetch(BuildState& state, bool clean, bool update)
+void FetchExternalData(BuildState& state, bool clean, bool update)
 {
+    LogInfo("Fetching external data");
+
     update |= clean;
 
     if (clean) {

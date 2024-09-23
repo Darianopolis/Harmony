@@ -17,13 +17,7 @@ using namespace std::literals;
 
 // -----------------------------------------------------------------------------
 
-namespace harmony::detail
-{
-    template<typename... Args>
-    void Ignore(Args&&...) {}
-}
-
-#define HARMONY_IGNORE(...) ::harmony::detail::Ignore(__VA_ARGS__);
+#define HARMONY_IGNORE(x) (void)x;
 
 // -----------------------------------------------------------------------------
 
@@ -203,3 +197,33 @@ void WriteStringToFile(const fs::path& path, std::string_view contents)
     std::ofstream out(path, std::ios::binary);
     out.write(contents.data(), contents.size());
 }
+
+// -----------------------------------------------------------------------------
+
+template<typename Ret, typename... Types>
+struct FuncBase {
+    void* body;
+    Ret(*fptr)(void*, Types...);
+
+    template<typename ...Args>
+    Ret operator()(Args&&... args) {
+        return fptr(body, std::forward<Args>(args)...);
+    }
+};
+
+template<typename Tx>
+struct GetFunctionImpl {};
+
+template<typename Ret, typename... Types>
+struct GetFunctionImpl<Ret(Types...)> { using type = FuncBase<Ret, Types...>; };
+
+template<typename Sig>
+struct FunctionRef : GetFunctionImpl<Sig>::type {
+    template<typename Fn>
+    FunctionRef(Fn&& fn)
+        : GetFunctionImpl<Sig>::type(&fn,
+            []<typename... Args>(void*b, Args&&... args) -> auto {
+                return std::forward<Fn>(*static_cast<Fn*>(b))(std::forward<Args>(args)...);
+            })
+    {};
+};

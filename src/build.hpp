@@ -120,11 +120,12 @@ struct BuildState
     const Backend* backend;
 };
 
-void ParseConfig(std::string_view config, BuildState& state);
-void Fetch(BuildState& state, bool clean, bool update);
+void ParseTargetsFile(BuildState& state, std::string_view config);
+void FetchExternalData(BuildState& state, bool clean, bool update);
 void ExpandTargets(BuildState& state);
-void ScanDependencies(BuildState& state);
-void Build(BuildState&, bool use_backend_dependency_scan);
+void ScanDependencies(BuildState& state, bool use_backend_dependency_scan);
+void DetectAndInsertStdModules(BuildState& state);
+void Build(BuildState&);
 
 struct Component
 {
@@ -148,12 +149,4 @@ struct ScanResult
     std::string unique_name;
 };
 
-ScanResult ScanFile(const fs::path& path, std::string_view data, void(*callback)(void*, Component&), void* payload);
-
-template<typename Fn>
-ScanResult ScanFile(const fs::path& path, std::string_view data, Fn&& fn)
-{
-    return ScanFile(path, data, +[](void* payload, Component& comp) {
-        static_cast<Fn *>(payload)->operator()(comp);
-    }, &fn);
-}
+ScanResult ScanFile(const fs::path& path, std::string& storage, FunctionRef<void(Component&)>);

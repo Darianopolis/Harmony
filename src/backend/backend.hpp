@@ -13,13 +13,15 @@ struct Backend {
 
     virtual void FindDependencies(const Task& task, std::string& dependency_info_p1689_json) const
     {
-        HARMONY_IGNORE(task, dependency_info_p1689_json)
+        HARMONY_IGNORE(task)
+        HARMONY_IGNORE(dependency_info_p1689_json)
         Error("FindDependencies is not implemented");
     }
 
     virtual void GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) const
     {
-        HARMONY_IGNORE(std_task, std_compat_task)
+        HARMONY_IGNORE(std_task)
+        HARMONY_IGNORE(std_compat_task)
         Error("GenerateStdModuleTasks is not implemented");
     }
 
@@ -37,7 +39,8 @@ struct Backend {
 
     virtual bool LinkStep(Target& target, std::span<const Task> tasks) const
     {
-        HARMONY_IGNORE(target, tasks)
+        HARMONY_IGNORE(target)
+        HARMONY_IGNORE(tasks)
         Error("LinkStep is not implemented");
     }
 

@@ -4,8 +4,10 @@
 #include <ranges>
 #endif
 
-void GenerateCMake(const fs::path& output_dir, std::vector<Task>& tasks, std::unordered_map<std::string, Target>& targets)
+void GenerateCMake(BuildState& state, const fs::path& output_dir)
 {
+    LogInfo("Generating CMake configuration");
+
     // TODO: CMake doesn't allow files to be referenced that don't share a common path with the CmakeLists.txt they are included from
     //   Solution: Generate symbolic/hard links to trick CMake?
     //   Solution: Generate additional CMakeLists.txt and include them?
@@ -29,7 +31,7 @@ add_compile_options(
         /openmp:llvm)
 )";
 
-    for (auto&[name, target] : targets) {
+    for (auto&[name, target] : state.targets) {
 
         out << "# ------------------------------------------------------------------------------\n";
 
@@ -56,7 +58,7 @@ add_compile_options(
 
                 bool found_any_modules = false;
 
-                for (auto& task : tasks) {
+                for (auto& task : state.tasks) {
                     if (task.target != &target) continue;
 
                     if (is_modules_pass) {
@@ -86,7 +88,7 @@ add_compile_options(
 
             // Scan for sources with different source types
             // TODO: How to prevent these from override "leaking" out
-            for (auto& task : tasks) {
+            for (auto& task : state.tasks) {
                 if (task.target != &target) continue;
                 if (task.source.type == task.source.detected_type) continue;
 
