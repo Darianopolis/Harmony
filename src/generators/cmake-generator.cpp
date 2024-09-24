@@ -4,6 +4,9 @@
 #include <ranges>
 #endif
 
+// TODO: DELETEME - Only for temporary usage of the link discovery code
+#include <backend/msvc-common.hpp>
+
 void GenerateCMake(BuildState& state, const fs::path& output_dir)
 {
     LogInfo("Generating CMake configuration");
@@ -126,31 +129,9 @@ add_compile_options(
                     out << "        " << import << '\n';
                 }
 
-                // TODO: THIS IS DUPLICATE AND MSVC SPECIFIC CODE
-                auto AddLinks = [&](const Target& t) {
-                    LogTrace("Adding links for: [{}]", t.name);
-                    for (auto& link : t.links) {
-                        if (fs::is_regular_file(link)) {
-                            LogTrace("    adding: [{}]", link.string());
-                            out << "        ${CMAKE_SOURCE_DIR}/" << FormatPath(link) << '\n';
-                        } else if (fs::is_directory(link)) {
-                            LogTrace("  finding links in: [{}]", link.string());
-                            for (auto iter : fs::directory_iterator(link)) {
-                                auto path = iter.path();
-                                if (path.extension() == ".lib") {
-                                    LogTrace("    adding: [{}]", path.string());
-                                    out << "        ${CMAKE_SOURCE_DIR}/" << FormatPath(path) << '\n';
-                                }
-                            }
-                        } else {
-                            LogWarn("link path not found: [{}]", link.string());
-                        }
-                    }
-                };
-                AddLinks(target);
-                for (auto* import_target : target.flattened_imports) {
-                    AddLinks(*import_target);
-                }
+                msvc::ForEachLink(target, [&](auto& link) {
+                    out << "        ${CMAKE_SOURCE_DIR}/" << FormatPath(link) << '\n';
+                });
 
                 out << "        )\n";
             }

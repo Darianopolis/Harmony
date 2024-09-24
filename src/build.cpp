@@ -38,7 +38,7 @@ void DetectAndInsertStdModules(BuildState& state)
                         };
                     }
 
-                    task.target->flattened_imports.emplace(&std_target);
+                    task.target->import.emplace("std");
                 }
 
                 if (depends_on.name == "std.compat") {
@@ -54,7 +54,7 @@ void DetectAndInsertStdModules(BuildState& state)
                         };
                     }
 
-                    task.target->flattened_imports.emplace(&std_target);
+                    task.target->import.emplace("std");
                 }
             }
         }
@@ -67,7 +67,35 @@ void DetectAndInsertStdModules(BuildState& state)
     }
 }
 
-void Build(BuildState& state)
+void Flatten(BuildState& state)
+{
+    for (auto&[name, target] : state.targets) {
+        std::unordered_set<Target*> flattened;
+
+        [&](this auto&& self, Target& cur) -> void {
+            if (flattened.contains(&cur)) return;
+            if (&cur != &target) {
+                // Emplace if not self
+                flattened.emplace(&cur);
+            }
+
+            for (auto import_name : cur.import) {
+                LogTrace("  importing from [{}]", import_name);
+                try {
+                    auto& imported = state.targets.at(import_name);
+
+                    self(imported);
+                } catch (std::exception& e) {
+                    Error(e.what());
+                }
+            }
+        }(target);
+
+        target.flattened_imports = std::move(flattened);
+    }
+}
+
+void Build(BuildState& state, bool multithreaded)
 {
     LogInfo("Building");
 
@@ -252,7 +280,6 @@ void Build(BuildState& state)
 
     auto start = chr::steady_clock::now();
 
-    bool mt_compile = true;
     {
         std::mutex m;
         std::atomic_uint32_t num_started = 0;
@@ -303,7 +330,7 @@ void Build(BuildState& state)
                     return success;
                 };
 
-                if (mt_compile) {
+                if (multithreaded) {
                     std::thread t{DoCompile};
                     t.detach();
                 } else {

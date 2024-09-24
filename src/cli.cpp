@@ -50,6 +50,7 @@ int main(int argc, char* argv[]) try
     bool use_backend_dependency_scan = false;
     bool fetch_dependencies = false;
     bool clean_dependencies = false;
+    bool multithreaded = true;
     for (int i = 2; i < argc; ++i) {
         // Check for updates
         if ("-fetch"sv == argv[i]) fetch_dependencies = true;
@@ -69,6 +70,10 @@ int main(int argc, char* argv[]) try
         else if ("-msvc"sv == argv[i]) use_clang = false;
         // Use vendor dependency scan
         else if ("-toolchain-dep-scan"sv == argv[i]) use_backend_dependency_scan = true;
+        // Build single threaded
+        // TODO: Allow user to select how many threads to use
+        //       Should be set in profile?
+        else if ("-st"sv == argv[i]) multithreaded = false;
         // Unknown switch
         else {
             LogError("Unknown switch: {}", argv[i]);
@@ -88,6 +93,9 @@ int main(int argc, char* argv[]) try
     }
     state.backend = backend.get();
 
+    // TODO: HUH
+    state.backend->AddSystemIncludeDirs(state);
+
     // TODO: This is only required because targets require memory stability after ExpandTargets right now!
     //       store targets via pointers or use indices
     state.targets["std"].name = "std";
@@ -97,8 +105,9 @@ int main(int argc, char* argv[]) try
     ExpandTargets(state);
     ScanDependencies(state, use_backend_dependency_scan);
     DetectAndInsertStdModules(state);
+    Flatten(state);
     GenerateCMake(state, ".");
-    Build(state);
+    Build(state, multithreaded);
 
     // HARMONY_IGNORE(argc, argv)
     //

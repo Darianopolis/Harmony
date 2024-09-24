@@ -15,4 +15,5 @@ struct ClangClBackend : Backend
     bool CompileTask(const Task& task) const final;
     void GenerateCompileCommands(std::span<const Task> tasks) const final;
     bool LinkStep(Target& target, std::span<const Task> tasks) const final;
+    void AddSystemIncludeDirs(BuildState& state) const final;
 };

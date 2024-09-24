@@ -11,6 +11,8 @@ import std.compat;
 #include <json.hpp>
 #include <xxhash.h>
 
+#include <math.h>
+
 static
 bool ws(char c)
 {
@@ -159,7 +161,16 @@ ScanResult ScanFile(const fs::path& path, std::string& data, FunctionRef<void(Co
                 while (*++cur != '"');
             }
             auto end = cur++;
+
             LogTrace("#include {}{}{}", angled ? '<' : '"', std::string_view(start, end), angled ? '>' : '"');
+
+            Component comp;
+            comp.name = std::string(start, end);
+            comp.type = Component::Type::Header;
+            comp.imported = true;
+            comp.angled = angled;
+
+            callback(comp);
         }
 
         if (*cur == 'm') {
@@ -308,6 +319,53 @@ ScanResult ScanFile(const fs::path& path, std::string& data, FunctionRef<void(Co
     };
 }
 
+std::optional<fs::path> FindInclude(fs::path path, std::string_view include, bool angled, std::span<const fs::path> include_dirs, BuildState& state, bool& is_system)
+{
+    is_system = false;
+
+    LogTrace("Searching for header {}{}{} included in [{}]", angled ? '<' : '"', include, angled ? '>' : '"', path.string());
+    if (!angled) {
+        while (path.has_parent_path()) {
+            auto new_path = path.parent_path();
+            if (new_path == path) {
+                break;
+            }
+            path = new_path;
+
+            auto target = path / include;
+
+            LogTrace("  \"{}\"", target.string());
+            if (fs::exists(target)) {
+                LogTrace("    Found!");
+                return std::move(target);
+            }
+        }
+    }
+
+    for (auto& include_dir : include_dirs) {
+        auto target = include_dir / include;
+        LogTrace("  <{}>", target.string());
+        if (fs::exists(target)) {
+            LogTrace("    Found!");
+            return std::move(target);
+        }
+    }
+
+    for (auto& include_dir : state.system_includes) {
+        auto target = include_dir / include;
+        LogTrace("  [{}]", target.string());
+        if (fs::exists(target)) {
+            LogTrace("    Found!");
+            is_system = true;
+            return std::move(target);
+        }
+    }
+
+    LogTrace("    Header not found");
+
+    return std::nullopt;
+}
+
 void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
 {
     LogInfo("Scanning dependencies");
@@ -368,17 +426,40 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
             }
 
             auto scan_result = ScanFile(task.source.path, scan_storage, [&](Component& comp) {
-                if (!comp.imported && comp.exported) {
-                    if (use_backend_dependency_scan) {
-                        produced_set[comp.name]--;
-                    } else {
-                        task.produces.emplace_back(std::move(comp.name));
-                    }
+                if (comp.type == Component::Type::Header) {
+                    bool is_system;
+                    FindInclude(task.source.path, comp.name, comp.angled, task.include_dirs, state, is_system);
                 } else {
-                    if (use_backend_dependency_scan) {
-                        required_set[comp.name]--;
+                    // Interface of Header Unit
+                    if (!comp.imported && comp.exported) {
+                        if (use_backend_dependency_scan) {
+                            produced_set[comp.name]--;
+                        } else {
+                            task.produces.emplace_back(std::move(comp.name));
+                        }
                     } else {
-                        task.depends_on.emplace_back(Dependency{.name = std::move(comp.name)});
+                        if (comp.type == Component::Type::HeaderUnit) {
+                            bool is_system;
+                            auto included = FindInclude(task.source.path, comp.name, comp.angled, task.include_dirs, state, is_system);
+                            if (!included) {
+                                Error("Source [{}] imports {}{}{} as header, but no header could be found",
+                                    task.unique_name, comp.angled ? '<' : '"', comp.name, comp.angled ? '>' : '"');
+                            }
+                            auto path = fs::absolute(*included);
+
+                            marked_header_units[path] = comp.name;
+
+                            if (is_system) {
+                                // TODO: We should track these per source instead of per target
+                                task.target->import.emplace("std");
+                            }
+                        }
+
+                        if (use_backend_dependency_scan) {
+                            required_set[comp.name]--;
+                        } else {
+                            task.depends_on.emplace_back(Dependency{.name = std::move(comp.name)});
+                        }
                     }
                 }
             });
@@ -430,18 +511,24 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
     LogDebug("Generating external header unit tasks");
 
     {
-        uint32_t ext_header_uid = 0;
         for (auto[path, logical_name] : marked_header_units) {
-            LogTrace("external header unit[{}] -> {}", path.string(), logical_name);
+            LogTrace("External header unit[{}] -> {}", path.string(), logical_name);
 
             auto& task = state.tasks.emplace_back();
             task.source.path = path;
+            // TODO: SHOULD ONLY DO THIS FOR SYSTEM HEADERS
+            //       If header isn't system header, and isn't tracked - error
+            //       We shouldn't depend on this for linking at all
+            task.target = &state.targets.at("std");
             task.source.type = SourceType::CppHeader;
             task.is_header_unit = true;
             task.produces.emplace_back(logical_name);
             task.external = true;
 
-            task.unique_name = std::format("{}.{}E", path.filename().string(), ext_header_uid++);
+            auto path_str = fs::absolute(path.string()).string();
+            auto hash = XXH64(path_str.data(), path_str.size(), 0);
+
+            task.unique_name = std::format("{}.{:x}", path.filename().string(), hash);
         }
     }
 }

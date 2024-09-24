@@ -120,9 +120,9 @@ bool MsvcBackend::CompileTask(const Task& task) const
     AddDependencies(task);
 
     cmds.emplace_back(std::format("/ifcOutput {}", task.bmi.filename().string()));
-    if (!task.is_header_unit) {
+    // if (!task.is_header_unit) {
         cmds.emplace_back(std::format("/Fo:{}", task.obj.filename().string()));
-    }
+    // }
 
     // Generate cmd string, use command files to avoid cmd line size limit
 
@@ -136,4 +136,9 @@ bool MsvcBackend::CompileTask(const Task& task) const
 bool MsvcBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 {
     return msvc::LinkStep(target, tasks);
+}
+
+void MsvcBackend::AddSystemIncludeDirs(BuildState& state) const
+{
+    msvc::AddSystemIncludeDirs(state);
 }

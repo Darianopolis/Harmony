@@ -1,4 +1,7 @@
 Functionality
+- Refactor output folder structures
+  - Separate out dependencies, temp files, objects/bmis in subfolders
+  - Move harmony state to centralized location?
 
 - Remove "tasks" from early build steps
   - Create intermediate Source representation (post expansion, pre task distribution)
@@ -32,7 +35,6 @@ Functionality
   - Visual Studio install location
   - Compile flags (generic and backend specific)
 - Expand argument parsing
-- Move harmony state to centralized location?
   - Allow installation of targets globally
 - Configuration in Lua
 

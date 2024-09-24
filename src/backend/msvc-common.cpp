@@ -169,8 +169,10 @@ namespace msvc
         }
         cmds.emplace_back(std::format("/OUT:{}", output_file.filename().string()));
         for (auto& task : tasks) {
-            if (task.is_header_unit) continue;
-            if (!target.flattened_imports.contains(task.target)) continue;
+            if (!target.flattened_imports.contains(task.target) && &target != task.target) continue;
+            if (!fs::exists(task.obj)) {
+                LogWarn("Could not find obj for [{}]", task.unique_name);
+            }
             cmds.emplace_back(msvc::PathToCmdString(task.obj));
         }
 
@@ -183,6 +185,36 @@ namespace msvc
         cmds.emplace_back("comsuppw.lib");
         cmds.emplace_back("onecore.lib");
 
+        msvc::ForEachLink(target, [&](auto& link) {
+            cmds.emplace_back(msvc::PathToCmdString(link));
+        });
+
+        msvc::SafeCompleteCmd(cmd, cmds);
+
+        LogCmd(cmd);
+
+        return std::system(cmd.c_str()) == 0;
+    }
+
+    void AddSystemIncludeDirs(BuildState& state)
+    {
+        auto _includes = win32::GetEnv("INCLUDE");
+        if (!_includes) Error("Not in valid VS enviornment, missing 'INCLUDE' environment variable");
+        auto& includes = *_includes;
+
+        auto start = 0;
+        while (start < includes.size()) {
+            auto sep = includes.find_first_of(';', start);
+            auto end = std::min(sep, includes.size());
+            auto include = includes.substr(start, end - start);
+            LogTrace("Found system include dir: [{}]", include);
+            state.system_includes.emplace_back(std::move(include));
+            start = end + 1;
+        }
+    }
+
+    void ForEachLink(const Target& target, FunctionRef<void(const fs::path&)> callback)
+    {
         // TODO: Move this to shared logic!
         // TODO: Backend should only care about identifying .lib extensions
         auto AddLinks = [&](const Target& t) {
@@ -190,14 +222,14 @@ namespace msvc
             for (auto& link : t.links) {
                 if (fs::is_regular_file(link)) {
                     LogTrace("    adding: [{}]", link.string());
-                    cmds.emplace_back(msvc::PathToCmdString(link));
+                    callback(link);
                 } else if (fs::is_directory(link)) {
                     LogTrace("  finding links in: [{}]", link.string());
                     for (auto iter : fs::directory_iterator(link)) {
                         auto path = iter.path();
                         if (path.extension() == ".lib") {
                             LogTrace("    adding: [{}]", path.string());
-                            cmds.emplace_back(msvc::PathToCmdString(path));
+                            callback(path);
                         }
                     }
                 } else {
@@ -209,11 +241,5 @@ namespace msvc
         for (auto* import_target : target.flattened_imports) {
             AddLinks(*import_target);
         }
-
-        msvc::SafeCompleteCmd(cmd, cmds);
-
-        LogCmd(cmd);
-
-        return std::system(cmd.c_str()) == 0;
     }
 }

@@ -76,7 +76,7 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
         }
 
         for (auto import : in_target["import"]) {
-            out_target.import.emplace_back(import.string());
+            out_target.import.emplace(import.string());
         }
 
         for (auto link : in_target["link"]) {
@@ -156,10 +156,10 @@ void ExpandTargets(BuildState& state)
         }
 
         std::unordered_set<Target*> flattened;
-
         [&](this auto&& self, Target& cur) -> void {
-            if (flattened.contains(&cur)) return;
-            flattened.emplace(&cur);
+            if (flattened.contains(&cur)) {
+                Error("Found recursive dependency on {} (repeated = {})", target.name, cur.name);
+            }
 
             for (auto import_name : cur.import) {
                 LogTrace("  importing from [{}]", import_name);
@@ -182,8 +182,6 @@ void ExpandTargets(BuildState& state)
                 }
             }
         }(target);
-
-        target.flattened_imports = std::move(flattened);
 
         for (auto& source : target.sources) {
             auto AddSourceFile = [&](const fs::path& file, SourceType type) {

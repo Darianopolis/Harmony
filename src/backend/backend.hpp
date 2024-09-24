@@ -50,6 +50,12 @@ struct Backend {
         HARMONY_IGNORE(tasks)
         Error("GenerateCompileCommands is not implemented");
     };
+
+    virtual void AddSystemIncludeDirs(BuildState& state) const
+    {
+        HARMONY_IGNORE(state);
+        Error("AddSystemIncludeDirs is not implemented");
+    }
 };
 
 inline

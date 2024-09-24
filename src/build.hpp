@@ -69,7 +69,7 @@ struct Target {
     std::vector<fs::path> links;
     std::vector<std::string> define_build;
     std::vector<std::string> define_import;
-    std::vector<std::string> import;
+    std::unordered_set<std::string> import;
     std::unordered_set<Target*> flattened_imports;
     std::optional<Executable> executable;
 
@@ -118,6 +118,7 @@ struct BuildState
     std::vector<Task> tasks;
     std::unordered_map<std::string, Target> targets;
     const Backend* backend;
+    std::vector<fs::path> system_includes;
 };
 
 void ParseTargetsFile(BuildState& state, std::string_view config);
@@ -125,7 +126,8 @@ void FetchExternalData(BuildState& state, bool clean, bool update);
 void ExpandTargets(BuildState& state);
 void ScanDependencies(BuildState& state, bool use_backend_dependency_scan);
 void DetectAndInsertStdModules(BuildState& state);
-void Build(BuildState&);
+void Flatten(BuildState& state);
+void Build(BuildState&, bool multithreaded);
 
 struct Component
 {

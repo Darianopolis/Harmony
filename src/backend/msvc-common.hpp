@@ -2,6 +2,11 @@
 
 #include <backend/backend.hpp>
 
+namespace win32
+{
+    std::optional<std::string> GetEnv(const char* name);
+}
+
 namespace msvc
 {
     void EnsureVisualStudioEnvironment();
@@ -13,4 +18,8 @@ namespace msvc
     void GenerateStdModuleTasks(Task* std_task, Task* std_compat_task);
 
     bool LinkStep(Target& target, std::span<const Task> tasks);
+
+    void AddSystemIncludeDirs(BuildState& state);
+
+    void ForEachLink(const Target& target, FunctionRef<void(const fs::path&)>);
 }

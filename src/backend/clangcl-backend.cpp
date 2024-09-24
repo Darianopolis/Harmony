@@ -212,3 +212,8 @@ bool ClangClBackend::LinkStep(Target& target, std::span<const Task> tasks) const
 {
     return msvc::LinkStep(target, tasks);
 }
+
+void ClangClBackend::AddSystemIncludeDirs(BuildState& state) const
+{
+    msvc::AddSystemIncludeDirs(state);
+}
