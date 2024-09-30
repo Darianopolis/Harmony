@@ -1,4 +1,5 @@
 import other;
+import third;
 
 int main()
 {

@@ -2,9 +2,9 @@
 .harmony/
 .vscode/
 .deps/
-.bootstrap/
 .cmake/
 .idea/
+.vs/
 out/
 *compile_commands.json*
 *.build.jsonc

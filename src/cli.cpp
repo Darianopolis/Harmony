@@ -11,19 +11,19 @@ import std.compat;
 
 int main(int argc, char* argv[]) try
 {
-     bool wait_on_close = false;
+    bool wait_on_close = false;
 
-     auto start = chr::steady_clock::now();
-     HARMONY_DEFER(&) {
-         auto end = chr::steady_clock::now();
-         LogInfo("--------------------------------------------------------------------------------");
-         LogInfo("Elapsed: {}", DurationToString(end - start));
-         if (wait_on_close) {
-             log_level = LogLevel::Info;
-             LogInfo("Press enter to close");
-             std::cin.get();
-         }
-     };
+    auto start = chr::steady_clock::now();
+    HARMONY_DEFER(&) {
+        auto end = chr::steady_clock::now();
+        LogInfo("--------------------------------------------------------------------------------");
+        LogInfo("Elapsed: {}", DurationToString(end - start));
+        if (wait_on_close) {
+            log_level = LogLevel::Info;
+            LogInfo("Press enter to close");
+            std::cin.get();
+        }
+    };
 
     auto PrintUsage = [] {
         LogInfo(R"(Usage: [build file] <flags...>

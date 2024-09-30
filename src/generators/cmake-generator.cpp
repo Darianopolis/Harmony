@@ -48,6 +48,7 @@ add_compile_options(
 
             std::vector<std::string>* defines = nullptr;
             std::vector<fs::path>* includes = nullptr;
+            // TODO: Different sources sets in target might have different TU inputs now!
 
             out << "target_sources(" << name << "\n";
             for (uint32_t i = 0; i < 2; ++i) {
@@ -77,8 +78,8 @@ add_compile_options(
                         }
                     }
 
-                    defines = &task.defines;
-                    includes = &task.include_dirs;
+                    defines = &task.inputs->defines;
+                    includes = &task.inputs->include_dirs;
 
                     out << "        " << FormatPath(task.source.path) << "\n";
                 }
@@ -93,7 +94,7 @@ add_compile_options(
             // TODO: How to prevent these from override "leaking" out
             for (auto& task : state.tasks) {
                 if (task.target != &target) continue;
-                if (task.source.type == task.source.detected_type) continue;
+                if (task.source.type == task.inputs->type) continue;
 
                 // Headers don't need to be overriden here
                 if (task.source.type == SourceType::CppHeader) continue;
@@ -123,9 +124,10 @@ add_compile_options(
                 out << "        )\n";
             }
 
-            if (!target.import.empty()) {
+            if (!target.imported_targets.empty()) {
                 out << "target_link_libraries(" << name << '\n';
-                for (auto& import : target.import) {
+                for (auto&[import, type] : target.imported_targets) {
+                    // TODO: PUBLIC/PRIVATE/INTERFACE
                     out << "        " << import << '\n';
                 }
 

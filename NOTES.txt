@@ -10,7 +10,7 @@ Precompiled Headers + Modules
 LLVM Build
 
   Install [C++ ATL for build tools] component from Visual Studio Installer
-  cmake -B build -G Ninja -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" -DCMAKE_BUILD_TYPE=Release ./llvm
+  cmake -B build -G Ninja -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCMAKE_BUILD_TYPE=Release ./llvm
   cmake --build build --config Release
 
 JSON Library
@@ -78,3 +78,9 @@ File Structure
           %outputFiles%
           ...
       ...
+
+Target:
+  CMake
+  Native
+  Executable
+  SharedLibrary

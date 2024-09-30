@@ -1,11 +1,18 @@
 Functionality
+- Clean up backend usage
+  - Statically register backends by string name, don't include in cli.cpp
+  - Separate compiler and linker backends
+  - Rename backend -> driver?
+
 - Refactor output folder structures
   - Separate out dependencies, temp files, objects/bmis in subfolders
   - Move harmony state to centralized location?
 
 - Remove "tasks" from early build steps
   - Create intermediate Source representation (post expansion, pre task distribution)
-- Improve dependency scanning
+
+- Integrate MSVC /scanDependencies- /showIncludes output properly
+- Improve custom dependency scanning
   - Add basic preprocessor parsing
     - The following should be enough for most (sane) module declarations/imports
       - #if FOO
@@ -13,11 +20,11 @@ Functionality
       - #define FOO VALUE
   - Handle strings (basic and multiline)
   - Evaluate full paths for include/imported headers
+
 - Lazy compilation
   - Use headers from dependency scanning to detect changes in tracked included headers
+  - Generate BMI and ABI compatibility identifier for translation inputs + backend
 
-- Add "source sets" to targets
-  - private defines and includes are applied directly to source sets
 - Separate target data source from target config
   - E.g. dependencies with multiple targets should be able to use same fetched git repo
 - Improve CMake config support

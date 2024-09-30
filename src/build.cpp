@@ -16,12 +16,18 @@ import std.compat;
 
 #include <backend/backend.hpp>
 
+// TODO: Move to generic logic
+#include <backend/msvc-common.hpp>
+
 void DetectAndInsertStdModules(BuildState& state)
 {
     LogInfo("Checking for standard modules");
 
+    // TODO: Create std as a fully fledged target without a bunch of special case logic
     auto& std_target = state.targets.at("std");
     std_target.name = "std";
+    // TODO: Cleanup
+    auto* inputs = new TranslationInputs();
     {
         std::optional<Task> std_task, std_compat_task;
         for (auto& task : state.tasks) {
@@ -32,13 +38,14 @@ void DetectAndInsertStdModules(BuildState& state)
                         std_task = Task {
                             .target = &std_target,
                             .source{.type = SourceType::CppInterface},
+                            .inputs = inputs,
                             .unique_name = "std",
                             .produces = { "std" },
                             .external = true,
                         };
                     }
 
-                    task.target->import.emplace("std");
+                    task.target->imported_targets["std"] = DependencyType::Private;
                 }
 
                 if (depends_on.name == "std.compat") {
@@ -47,6 +54,7 @@ void DetectAndInsertStdModules(BuildState& state)
                         std_compat_task = Task {
                             .target = &std_target,
                             .source{.type = SourceType::CppInterface},
+                            .inputs = inputs,
                             .unique_name = "std.compat",
                             .produces = { "std.compat" },
                             .depends_on = { {"std"} },
@@ -54,7 +62,7 @@ void DetectAndInsertStdModules(BuildState& state)
                         };
                     }
 
-                    task.target->import.emplace("std");
+                    task.target->imported_targets["std"] = DependencyType::Private;
                 }
             }
         }
@@ -79,7 +87,8 @@ void Flatten(BuildState& state)
                 flattened.emplace(&cur);
             }
 
-            for (auto import_name : cur.import) {
+            for (auto&[import_name, type] : cur.imported_targets) {
+                // TODO: link vs source imports need to be handled separately
                 LogTrace("  importing from [{}]", import_name);
                 try {
                     auto& imported = state.targets.at(import_name);
@@ -112,6 +121,8 @@ void Build(BuildState& state, bool multithreaded)
     LogDebug("Resolving dependencies");
 
     {
+        // TODO: We should handle this per target, unbuilt targets may remain unexpanded and only contain
+        //       output information
         auto FindTaskForProduced = [&](std::string_view name) -> Task* {
             for (auto& task : state.tasks) {
                 for (auto& produced : task.produces) {
@@ -285,6 +296,7 @@ void Build(BuildState& state, bool multithreaded)
         std::atomic_uint32_t num_started = 0;
         std::atomic_uint32_t num_complete = 0;
         uint32_t last_num_complete = 0;
+        uint32_t max_threads = std::max(2u, std::thread::hardware_concurrency()) - 1;
 
         // bool abort = false;
 
@@ -294,6 +306,10 @@ void Build(BuildState& state, bool multithreaded)
 
             auto _num_started = num_started.load();
             auto _num_complete = num_complete.load();
+            if (_num_started - _num_complete > max_threads) {
+                num_complete.wait(_num_complete);
+                continue;
+            }
             if (last_num_complete == _num_complete && _num_started > _num_complete) {
                 // wait if no new complete and at least one task in-flight
                 num_complete.wait(_num_complete);
@@ -403,7 +419,7 @@ void Build(BuildState& state, bool multithreaded)
 
     if (stats.compiled == stats.to_compile) {
 
-        LogInfo("Linking target executables");
+        LogInfo("Creating target executables");
 
         for (auto&[_, target] : state.targets) {
             if (!target.executable) continue;
@@ -412,7 +428,31 @@ void Build(BuildState& state, bool multithreaded)
             auto res = state.backend->LinkStep(target, state.tasks);
             if (!res) {
                 LogError("Error linking [{}] from [{}]", target.executable->path.string(), target.name);
+                continue;
             }
+
+            // Copy shared artifacts
+
+            bool logged_copy = false;
+
+            auto out_dir = target.executable->path.parent_path();
+            msvc::ForEachShared(target, [&](const fs::path& shared) {
+                auto to = out_dir / shared.filename();
+                bool to_exists = fs::exists(to);
+                bool do_copy = !to_exists || (fs::last_write_time(to) < fs::last_write_time(shared));
+                if (!do_copy) return;
+                if (!logged_copy) {
+                    logged_copy = true;
+                    LogInfo("Copying shared artifacts...");
+                }
+                if (to_exists) {
+                    LogTrace("Updating shared artifact: {}", shared.string());
+                    fs::remove(to);
+                } else {
+                    LogTrace("Copying shared artifact: {}", shared.string());
+                }
+                fs::copy(shared, to);
+            });
         }
     }
 }

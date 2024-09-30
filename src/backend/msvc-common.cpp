@@ -242,4 +242,34 @@ namespace msvc
             AddLinks(*import_target);
         }
     }
+
+    void ForEachShared(const Target& target, FunctionRef<void(const fs::path&)> callback)
+    {
+        // TODO: Move this to shared logic!
+        // TODO: Backend should only care about identifying .dll extensions
+        auto AddShared = [&](const Target& t) {
+            LogTrace("Adding shared libraries for: [{}]", t.name);
+            for (auto& shared : t.shared) {
+                if (fs::is_regular_file(shared)) {
+                    LogTrace("    adding: [{}]", shared.string());
+                    callback(shared);
+                } else if (fs::is_directory(shared)) {
+                    LogTrace("  finding shared libraries in: [{}]", shared.string());
+                    for (auto iter : fs::directory_iterator(shared)) {
+                        auto path = iter.path();
+                        if (path.extension() == ".dll") {
+                            LogTrace("    adding: [{}]", path.string());
+                            callback(path);
+                        }
+                    }
+                } else {
+                    LogWarn("shared library path not found: [{}]", shared.string());
+                }
+            }
+        };
+        AddShared(target);
+        for (auto* import_target : target.flattened_imports) {
+            AddShared(*import_target);
+        }
+    }
 }

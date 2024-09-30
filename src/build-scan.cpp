@@ -428,7 +428,7 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
             auto scan_result = ScanFile(task.source.path, scan_storage, [&](Component& comp) {
                 if (comp.type == Component::Type::Header) {
                     bool is_system;
-                    FindInclude(task.source.path, comp.name, comp.angled, task.include_dirs, state, is_system);
+                    FindInclude(task.source.path, comp.name, comp.angled, task.inputs->include_dirs, state, is_system);
                 } else {
                     // Interface of Header Unit
                     if (!comp.imported && comp.exported) {
@@ -440,7 +440,7 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
                     } else {
                         if (comp.type == Component::Type::HeaderUnit) {
                             bool is_system;
-                            auto included = FindInclude(task.source.path, comp.name, comp.angled, task.include_dirs, state, is_system);
+                            auto included = FindInclude(task.source.path, comp.name, comp.angled, task.inputs->include_dirs, state, is_system);
                             if (!included) {
                                 Error("Source [{}] imports {}{}{} as header, but no header could be found",
                                     task.unique_name, comp.angled ? '<' : '"', comp.name, comp.angled ? '>' : '"');
@@ -451,7 +451,7 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
 
                             if (is_system) {
                                 // TODO: We should track these per source instead of per target
-                                task.target->import.emplace("std");
+                                task.target->imported_targets["std"] = DependencyType::Private;
                             }
                         }
 

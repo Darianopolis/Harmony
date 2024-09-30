@@ -27,11 +27,11 @@ void MsvcBackend::FindDependencies(const Task& task, std::string& dependency_inf
 
     auto cmd = std::format("cl.exe /std:c++latest /nologo /scanDependencies {} /TP {} ", msvc::PathToCmdString(output_location), msvc::PathToCmdString(task.source.path));
 
-    for (auto& include_dir : task.include_dirs) {
+    for (auto& include_dir : task.inputs->include_dirs) {
         cmd += std::format(" /I{}", msvc::PathToCmdString(include_dir));
     }
 
-    for (auto& define : task.defines) {
+    for (auto& define : task.inputs->defines) {
         cmd += std::format(" /D{}", define);
     }
 
@@ -71,8 +71,10 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     std::vector<std::string> cmds;
 
+    auto type = (task.inputs->type == SourceType::Unknown) ? task.source.type : task.inputs->type;
+
     cmds.emplace_back(std::format("/c /nologo /std:c++latest /EHsc"));
-    switch (task.source.type) {
+    switch (type) {
         break;case SourceType::CSource: cmds.emplace_back(std::format("/TC {}", msvc::PathToCmdString(task.source.path)));
         break;case SourceType::CppSource: cmds.emplace_back(std::format("/TP {}", msvc::PathToCmdString(task.source.path)));
         break;case SourceType::CppHeader: {
@@ -92,11 +94,11 @@ bool MsvcBackend::CompileTask(const Task& task) const
 
     // cmds.emplace_back("/FORCE /IGNORE:4006"); // When linking results from clang-cl that consume import std;
 
-    for (auto& include_dir : task.include_dirs) {
+    for (auto& include_dir : task.inputs->include_dirs) {
         cmds.emplace_back(std::format("/I{}", msvc::PathToCmdString(include_dir)));
     }
 
-    for (auto& define : task.defines) {
+    for (auto& define : task.inputs->defines) {
         cmds.emplace_back(std::format("/D{}", define));
     }
 

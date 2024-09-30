@@ -20,11 +20,23 @@ enum class SourceType
     CppInterface,
 };
 
+inline
+std::string_view SourceTypeToString(SourceType type)
+{
+    switch (type) {
+        case SourceType::Unknown: return "Unknown";
+        case SourceType::CppSource: return "C++ Source";
+        case SourceType::CppHeader: return "C++ Header";
+        case SourceType::CppInterface: return "C++ Interface";
+        case SourceType::CSource: return "C Source";
+    }
+    std::unreachable();
+}
+
 struct Source
 {
     fs::path path;
     SourceType type = SourceType::Unknown;
-    SourceType detected_type = SourceType::Unknown;
 };
 
 enum class ExecutableType
@@ -62,21 +74,59 @@ struct CMake
     std::vector<std::string> options;
 };
 
+enum class DependencyType
+{
+    Private,
+    Public,
+    Interface
+};
+
+struct TranslationInputs
+{
+    SourceType type = SourceType::Unknown;
+    std::vector<std::string> defines;
+    std::vector<fs::path> include_dirs;
+    std::vector<fs::path> force_includes;
+
+    void MergeBack(const TranslationInputs& other)
+    {
+        if (type == SourceType::Unknown) type = other.type;
+
+        // TODO: Deduplicate keys instead of prepending defines
+        auto tmp_define = std::move(defines);
+        defines = other.defines;
+        for (auto& define : tmp_define) defines.emplace_back(define);
+
+        for (auto& include : other.include_dirs) include_dirs.emplace_back(include);
+        for (auto& finclude : other.force_includes) force_includes.emplace_back(finclude);
+    }
+};
+
+struct SourceSet
+{
+    std::vector<Source> sources;
+    TranslationInputs inputs;
+};
+
 struct Target {
     std::string name;
-    std::vector<Source> sources;
-    std::vector<fs::path> include_dirs;
-    std::vector<fs::path> links;
-    std::vector<std::string> define_build;
-    std::vector<std::string> define_import;
-    std::unordered_set<std::string> import;
-    std::unordered_set<Target*> flattened_imports;
-    std::optional<Executable> executable;
+    std::unordered_map<std::string, DependencyType> imported_targets;
 
-    // TODO: This should just be a list of type erased "plugin" configuration
+    std::vector<SourceSet> sources;
+    TranslationInputs exported_translation_inputs;
+
+    std::optional<Executable> executable;
+    std::vector<fs::path> links;
+    std::vector<fs::path> shared;
+
+    // TODO: Data sources should be separated out
+    // TODO: Sharing CMake configuration with multiple CMake targets separated over multiple Harmony targets?
     std::optional<Git> git;
     std::optional<Download> download;
     std::optional<CMake> cmake;
+
+    // TODO: This is internal build state, move
+    std::unordered_set<Target*> flattened_imports;
 };
 
 enum class TaskState
@@ -97,12 +147,11 @@ struct Dependency {
 struct Task {
     Target* target;
     Source source;
+    TranslationInputs* inputs;
+
     fs::path bmi;
     fs::path obj;
     std::string unique_name;
-
-    std::vector<fs::path> include_dirs;
-    std::vector<std::string> defines;
 
     std::vector<std::string> produces;
     std::vector<Dependency> depends_on;

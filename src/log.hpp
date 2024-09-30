@@ -4,9 +4,14 @@
 #include <format>
 #include <syncstream>
 #include <iostream>
+#include <source_location>
 #endif
 
+// ---------------------------------------------------------------------------------------------------------------------
+
 constexpr std::string_view EndLogLine = "\u001B[0m\n";
+
+// ---------------------------------------------------------------------------------------------------------------------
 
 enum class LogLevel : uint32_t
 {
@@ -19,21 +24,47 @@ enum class LogLevel : uint32_t
 
 extern LogLevel log_level;
 
+template<typename ...Args>
+struct BasicLocatedFormatString
+{
+    std::source_location loc;
+    std::format_string<Args...> fmt;
+
+    template<typename Str>
+    consteval BasicLocatedFormatString(const Str& format, std::source_location _loc = std::source_location::current())
+        : loc(_loc)
+        , fmt(format)
+    {}
+
+    constexpr std::string_view get() const noexcept
+    {
+        return fmt.get();
+    }
+};
+
+// This using declaration is required for Args... to be deduced correctly
+template <class... Args>
+using LocatedFormatString = BasicLocatedFormatString<std::type_identity_t<Args>...>;
+
+// ---------------------------------------------------------------------------------------------------------------------
+
 inline
 bool IsLogLevel(LogLevel level)
 {
     return uint32_t(level) >= uint32_t(log_level);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+
 template<class... Args>
-void Log(const std::format_string<Args...> fmt, Args&&... args)
+void Log(const LocatedFormatString<Args...> fmt, Args&&... args)
 {
     std::osyncstream os(std::cout);
     os << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
 }
 
 template<class... Args>
-void LogTrace(const std::format_string<Args...> fmt, Args&&... args)
+void LogTrace(const LocatedFormatString<char, Args...> fmt, Args&&... args)
 {
     if (!IsLogLevel(LogLevel::Trace)) return;
     std::osyncstream os(std::cout);
@@ -41,7 +72,7 @@ void LogTrace(const std::format_string<Args...> fmt, Args&&... args)
 }
 
 template<class... Args>
-void LogDebug(const std::format_string<Args...> fmt, Args&&... args)
+void LogDebug(const LocatedFormatString<Args...> fmt, Args&&... args)
 {
     if (!IsLogLevel(LogLevel::Debug)) return;
     std::osyncstream os(std::cout);
@@ -49,7 +80,7 @@ void LogDebug(const std::format_string<Args...> fmt, Args&&... args)
 }
 
 template<class... Args>
-void LogInfo(const std::format_string<Args...> fmt, Args&&... args)
+void LogInfo(const LocatedFormatString<Args...> fmt, Args&&... args)
 {
     if (!IsLogLevel(LogLevel::Info)) return;
     std::osyncstream os(std::cout);
@@ -57,7 +88,7 @@ void LogInfo(const std::format_string<Args...> fmt, Args&&... args)
 }
 
 template<class... Args>
-void LogWarn(const std::format_string<Args...> fmt, Args&&... args)
+void LogWarn(const LocatedFormatString<Args...> fmt, Args&&... args)
 {
     if (!IsLogLevel(LogLevel::Warn)) return;
     std::osyncstream os(std::cout);
@@ -65,12 +96,14 @@ void LogWarn(const std::format_string<Args...> fmt, Args&&... args)
 }
 
 template<class... Args>
-void LogError(const std::format_string<Args...> fmt, Args&&... args)
+void LogError(const LocatedFormatString<Args...> fmt, Args&&... args)
 {
     if (!IsLogLevel(LogLevel::Error)) return;
     std::osyncstream os(std::cout);
     os << "[\u001B[91mERROR\u001B[0m] " << std::vformat(fmt.get(), std::make_format_args(args...)) << EndLogLine;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
 
 namespace harmony::formatting::detail {
     inline
@@ -118,42 +151,42 @@ std::string ByteSizeToString(uint64_t bytes)
 
     constexpr auto Exabyte   = 1ull << 60;
     if (bytes >= Exabyte) {
-        double exabytes = bytes / double(Exabyte);
+        double exabytes = bytes / static_cast<double>(Exabyte);
         return std::format("{:.{}f}EiB", exabytes, DecimalsFor3SF(exabytes));
     }
 
     constexpr auto Petabyte  = 1ull << 50;
     if (bytes >= Petabyte) {
-        double petabytes = bytes / double(Petabyte);
+        double petabytes = bytes / static_cast<double>(Petabyte);
         return std::format("{:.{}f}PiB", petabytes, DecimalsFor3SF(petabytes));
     }
 
     constexpr auto Terabyte  = 1ull << 40;
     if (bytes >= Terabyte) {
-        double terabytes = bytes / double(Terabyte);
+        double terabytes = bytes / static_cast<double>(Terabyte);
         return std::format("{:.{}f}TiB", terabytes, DecimalsFor3SF(terabytes));
     }
 
     constexpr auto Gigabyte = 1ull << 30;
     if (bytes >= Gigabyte) {
-        double gigabytes = bytes / double(Gigabyte);
+        double gigabytes = bytes / static_cast<double>(Gigabyte);
         return std::format("{:.{}f}GiB", gigabytes, DecimalsFor3SF(gigabytes));
     }
 
     constexpr auto Megabyte = 1ull << 20;
     if (bytes >= Megabyte) {
-        double megabytes = bytes / double(Megabyte);
+        double megabytes = bytes / static_cast<double>(Megabyte);
         return std::format("{:.{}f}MiB", megabytes, DecimalsFor3SF(megabytes));
     }
 
     constexpr auto Kilobyte = 1ull << 10;
     if (bytes >= Kilobyte) {
-        double kilobytes = bytes / double(Kilobyte);
+        double kilobytes = bytes / static_cast<double>(Kilobyte);
         return std::format("{:.{}f}KiB", kilobytes, DecimalsFor3SF(kilobytes));
     }
 
     if (bytes > 0) {
-        return std::format("{} byte{}", double(bytes), bytes == 1 ? "" : "s");
+        return std::format("{} byte{}", static_cast<double>(bytes), bytes == 1 ? "" : "s");
     }
 
     return "0 bytes";

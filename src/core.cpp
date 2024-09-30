@@ -5,4 +5,4 @@ import std.compat;
 
 #include <core.hpp>
 
-extern bool TraceCmds = true;
+bool TraceCmds = true;

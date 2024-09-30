@@ -13,6 +13,12 @@ import std.compat;
 #include <cstdint>
 #endif
 
+const static fs::path CMakeBuildDir = ".harmony-cmake-build";
+const static fs::path CMakeInstallDir = CMakeBuildDir / "install";
+const static fs::path CMakeInstallBinDir = CMakeInstallDir / "bin";
+const static fs::path CMakeInstallIncludeDir = CMakeInstallDir / "include";
+const static fs::path CMakeInstallLinkDir = CMakeInstallDir / "link";
+
 void ParseTargetsFile(BuildState& state, std::string_view config)
 {
     LogInfo("Parsing targets file");
@@ -22,7 +28,6 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
 
     for (auto in_target :  doc.root()["targets"]) {
         auto name = in_target["name"].string();
-        LogTrace("name = {}", (bool)name);
         auto dir = deps_folder / name;
         if (auto dir_str = in_target["dir"].string()) {
             LogTrace("Custom dir path: {}", dir_str);
@@ -35,48 +40,81 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
         auto& out_target = state.targets[name];
         out_target.name = name;
 
+        for (auto include : in_target["include"]) {
+            out_target.exported_translation_inputs.include_dirs.emplace_back(dir / include.string());
+        }
+
+        for (auto define : in_target["define"]) {
+            out_target.exported_translation_inputs.defines.emplace_back(define.string());
+        }
+
+        for (auto shared : in_target["shared"]) {
+            out_target.shared.emplace_back(dir / shared.string());
+        }
+
+        SourceSet default_source_set;
+        default_source_set.inputs = out_target.exported_translation_inputs;
+
         for (auto source : in_target["sources"]) {
             if (source.obj()) {
-                LogTrace("  sources(type = {})", source["type"].string());
+                auto type_str = source["type"].string();
+                if (type_str) {
+                    LogTrace("  sources(type = {})", type_str);
+                } else {
+                    LogTrace("  sources");
+                }
 
                 auto type = [&] {
-                    auto type_str = source["type"].string();
-                    if (!type_str) Error("Source object must contain 'type'");
+                    if (!type_str) return SourceType::Unknown;
+                    if ("c"sv == type_str) return SourceType::CSource;
                     if ("c++"sv == type_str) return SourceType::CppSource;
                     if ("c++header"sv == type_str) return SourceType::CppHeader;
                     if ("c++interface"sv == type_str) return SourceType::CppInterface;
                     Error(std::format("Unknown source type: [{}]", type_str));
                 }();
 
+                auto& source_set = out_target.sources.emplace_back();
+                source_set.inputs = out_target.exported_translation_inputs;
+                source_set.inputs.type = type;
+
+                if (auto includes = source["includes"]) {
+                    source_set.inputs.include_dirs.clear();
+                    for (auto include : includes) {
+                        source_set.inputs.include_dirs.emplace_back(dir / include.string());
+                    }
+                }
+
+                if (auto defines = source["define"]) {
+                    source_set.inputs.defines.clear();
+                    for (auto define : defines) {
+                        source_set.inputs.defines.emplace_back(define.string());
+                    }
+                }
+
                 for (auto file : source["paths"]) {
                     LogTrace("    {}", file.string());
-                    out_target.sources.emplace_back(dir / file.string(), type);
+                    source_set.sources.emplace_back(dir / file.string());
                 }
             } else {
                 LogTrace("  source: {}", source.string());
-                out_target.sources.emplace_back(dir / source.string(), SourceType::Unknown);
+                default_source_set.sources.emplace_back(dir / source.string());
             }
         }
 
-        for (auto include : in_target["include"]) {
-            out_target.include_dirs.emplace_back(dir / include.string());
-        }
-
-        for (auto define : in_target["define"]) {
-            out_target.define_build.emplace_back(define.string());
-            out_target.define_import.emplace_back(define.string());
-        }
-
-        for (auto define : in_target["define-build"]) {
-            out_target.define_build.emplace_back(define.string());
-        }
-
-        for (auto define : in_target["define-import"]) {
-            out_target.define_import.emplace_back(define.string());
+        if (!default_source_set.sources.empty()) {
+            out_target.sources.emplace_back(std::move(default_source_set));
         }
 
         for (auto import : in_target["import"]) {
-            out_target.import.emplace(import.string());
+            out_target.imported_targets[import.string()] = DependencyType::Private;
+        }
+
+        for (auto import : in_target["import-public"]) {
+            out_target.imported_targets[import.string()] = DependencyType::Public;
+        }
+
+        for (auto import : in_target["import-interface"]) {
+            out_target.imported_targets[import.string()] = DependencyType::Interface;
         }
 
         for (auto link : in_target["link"]) {
@@ -122,6 +160,30 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
             for (auto option : in_cmake["options"]) {
                 cmake.options.emplace_back(option.string());
             }
+
+            if (auto include_range = in_cmake["include"]) {
+                for (auto include : include_range) {
+                    out_target.exported_translation_inputs.include_dirs.emplace_back(dir / CMakeInstallDir / include.string());
+                }
+            } else {
+                out_target.exported_translation_inputs.include_dirs.emplace_back(dir / CMakeInstallIncludeDir);
+            }
+
+            if (auto link_range = in_cmake["link"]) {
+                for (auto link : link_range) {
+                    out_target.links.emplace_back(dir / CMakeInstallDir / link.string());
+                }
+            } else {
+                out_target.links.emplace_back(dir / CMakeInstallLinkDir);
+            }
+
+            if (auto shared_range = in_cmake["shared"]) {
+                for (auto shared : shared_range) {
+                    out_target.shared.emplace_back(dir / CMakeInstallDir / shared.string());
+                }
+            } else {
+                out_target.shared.emplace_back(dir / CMakeInstallBinDir);
+            }
         }
     }
 }
@@ -130,61 +192,59 @@ void ExpandTargets(BuildState& state)
 {
     LogInfo("Expanding targets");
 
-    uint32_t source_id = 0;
-
     for (auto&[_, target] : state.targets) {
-        if (target.sources.empty()) continue;
 
-        LogTrace("====");
+        LogTrace("Expanding target: {}", target.name);
 
-        std::vector<fs::path> includes;
-        std::vector<std::string> defines;
-
-        for (auto& include_dir : target.include_dirs) {
-            includes.emplace_back(include_dir);
-        }
-        for (auto& define : target.define_build) {
-            defines.emplace_back(define);
+        if (target.sources.empty()) {
+            LogTrace("  Target has no sources, skipping...");
+            continue;
         }
 
-        for (auto& include : includes) {
-            LogTrace("  includes: {}", include.string());
-        }
-
-        for (auto& define : defines) {
-            LogTrace("  defines:  {}", define);
-        }
+        TranslationInputs imported_translation_inputs;
 
         std::unordered_set<Target*> flattened;
         [&](this auto&& self, Target& cur) -> void {
             if (flattened.contains(&cur)) {
                 Error("Found recursive dependency on {} (repeated = {})", target.name, cur.name);
             }
+            flattened.emplace(&cur);
 
-            for (auto import_name : cur.import) {
+            for (auto[import_name, type] : cur.imported_targets) {
                 LogTrace("  importing from [{}]", import_name);
                 try {
                     auto& imported = state.targets.at(import_name);
 
-                    for (auto& include_dir : imported.include_dirs) {
-                        LogTrace("    includes: {}", include_dir.string());
-                        includes.emplace_back(include_dir);
-                    }
+                    if (   (&cur == &target && type != DependencyType::Interface)
+                        || (&cur != &target && type != DependencyType::Private))
+                    {
+                        for (auto& include_dir : imported.exported_translation_inputs.include_dirs) {
+                            LogTrace("    includes: {}", include_dir.string());
+                            imported_translation_inputs.include_dirs.emplace_back(include_dir);
+                        }
 
-                    for (auto& define : imported.define_import) {
-                        LogTrace("    defines:  {}", define);
-                        defines.emplace_back(define);
-                    }
+                        for (auto& define : imported.exported_translation_inputs.defines) {
+                            LogTrace("    defines:  {}", define);
+                            imported_translation_inputs.defines.emplace_back(define);
+                        }
 
-                    self(imported);
+                        self(imported);
+                    }
                 } catch (std::exception& e) {
                     Error(e.what());
                 }
             }
         }(target);
 
-        for (auto& source : target.sources) {
+        for (auto& source_set : target.sources) {
+            LogTrace("  Expanding Source Set");
+            // TODO: Memory cleanup
+            auto* inputs = new TranslationInputs(source_set.inputs);
+            inputs->MergeBack(imported_translation_inputs);
+
             auto AddSourceFile = [&](const fs::path& file, SourceType type) {
+                LogTrace("      Scanning: {} (type = {})", file.string(), SourceTypeToString(type));
+
                 auto ext = file.extension();
 
                 auto detected_type = SourceType::Unknown;
@@ -195,44 +255,33 @@ void ExpandTargets(BuildState& state)
                 else if (ext == ".ixx") detected_type = SourceType::CppInterface;
                 else if (ext == ".cppm") detected_type = SourceType::CppInterface;
 
-                if (type == SourceType::Unknown) {
-                    type = detected_type;
-                }
+                auto effective_type = type == SourceType::Unknown ? detected_type : type;
 
-                if (type == SourceType::Unknown) return;
+                if (effective_type == SourceType::Unknown) return;
+                LogTrace("        Type = {} (detected = {}, override = {})", SourceTypeToString(effective_type),
+                    SourceTypeToString(detected_type), SourceTypeToString(type));
 
                 auto& task = state.tasks.emplace_back();
                 task.target = &target;
-                task.source = { file, type, detected_type };
-
-                // TODO: We really don't want to duplicate this for every task
-                task.include_dirs = includes;
-                task.defines = defines;
-
-                // TODO: These source ids aren't stable across source file add/remove/reorder
-                task.unique_name = std::format("{}.{}.{}", target.name, task.source.path.filename().replace_extension("").string(), source_id++);
-
-                switch (task.source.type) {
-                    break;case SourceType::Unknown: std::unreachable();
-                    break;case SourceType::CppSource:    LogTrace("C++ Source    - {}", task.source.path.string());
-                    break;case SourceType::CppHeader:    LogTrace("C++ Header    - {}", task.source.path.string());
-                    break;case SourceType::CppInterface: LogTrace("C++ Interface - {}", task.source.path.string());
-                    break;case SourceType::CSource:      LogTrace("C   Source    - {}", task.source.path.string());
-                }
+                task.source = Source(file, detected_type);
+                task.inputs = inputs;
             };
 
-            if (fs::is_directory(source.path)) {
-                LogTrace("  scanning for source in: [{}]", source.path.string());
-                for (auto file : fs::recursive_directory_iterator(source.path,
-                        fs::directory_options::follow_directory_symlink |
-                        fs::directory_options::skip_permission_denied)) {
+            for (auto source : source_set.sources) {
+                LogTrace("    Source View: {}", source.path.string());
+                if (fs::is_directory(source.path)) {
+                    LogTrace("  scanning for source in: [{}]", source.path.string());
+                    for (auto file : fs::recursive_directory_iterator(source.path,
+                            fs::directory_options::follow_directory_symlink |
+                            fs::directory_options::skip_permission_denied)) {
 
-                    AddSourceFile(file.path(), source.type);
+                        AddSourceFile(file.path(), source_set.inputs.type);
+                            }
+                } else if (fs::is_regular_file(source.path)) {
+                    AddSourceFile(source.path, source_set.inputs.type);
+                } else {
+                    LogTrace("Source path [{}] not dir or file", source.path.string());
                 }
-            } else if (fs::is_regular_file(source.path)) {
-                AddSourceFile(source.path, source.type);
-            } else {
-                LogTrace("Source path [{}] not dir or file", source.path.string());
             }
         }
     }
@@ -341,18 +390,17 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                 }
 
                 if (auto& cmake = target.cmake) {
-                    auto cmake_build_dir = ".harmony-cmake-build";
 
                     auto profile = "RelWithDebInfo";
 
                     if (stage == stage_git_prepare) {
                         // TODO: Check for for successful completion of cmake configure instead of fs::exists
-                        if (!fs::exists(dir / cmake_build_dir) || update) {
+                        if (!fs::exists(dir / CMakeBuildDir) || update) {
                             LogInfo("Configuring CMake build in [{}]", dir.string());
 
                             std::string cmd;
                             cmd += std::format(" cd .deps/{}", name);
-                            cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={0}/install -DCMAKE_BUILD_TYPE={1} -B {0}", cmake_build_dir, profile);
+                            cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={} -DCMAKE_BUILD_TYPE={} -B {}", FormatPath(CMakeInstallDir), profile, FormatPath(CMakeBuildDir));
 
                             for (auto option : cmake->options) {
                                 cmd += std::format(" -D{}", option);
@@ -370,7 +418,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
 
                             std::string cmd;
                             cmd += std::format(" cd .deps/{}", name);
-                            cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", cmake_build_dir, profile);
+                            cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", FormatPath(CMakeBuildDir), profile);
 
                             LogCmd(cmd);
                             std::system(cmd.c_str());

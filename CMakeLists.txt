@@ -1,11 +1,5 @@
 cmake_minimum_required(VERSION 3.30.3)
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
-        # This specific value changes as experimental support evolves. See
-        # `Help/dev/experimental.rst` in the CMake source corresponding to
-        # your CMake build for the exact value to use.
-        "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
 project(Harmony LANGUAGES CXX C)
-set(CMAKE_CXX_MODULE_STD 1)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 add_compile_options(
@@ -71,7 +65,8 @@ target_sources(test
         test/main.cpp
         PUBLIC
         FILE_SET CXX_MODULES TYPE CXX_MODULES FILES
-        test/other.ixx)
+        test/other.ixx
+        test/third.ixx)
 set_target_properties(test PROPERTIES LINKER_LANGUAGE CXX)
 add_custom_command(TARGET test POST_BUILD COMMAND
         ${CMAKE_COMMAND} -E copy $<TARGET_FILE:test> ${CMAKE_SOURCE_DIR}/out/test.exe)

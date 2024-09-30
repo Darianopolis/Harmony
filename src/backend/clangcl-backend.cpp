@@ -35,11 +35,11 @@ void ClangClBackend::FindDependencies(const Task& task, std::string& dependency_
     auto cmd = std::format("{} -format=p1689 -o {} -- {} /std:c++latest /nologo -x c++-module {} ",
         ClangScanDepsPath, msvc::PathToCmdString(output_location), ClangClPath, msvc::PathToCmdString(task.source.path));
 
-    for (auto& include_dir : task.include_dirs) {
+    for (auto& include_dir : task.inputs->include_dirs) {
         cmd += std::format(" /I{}", msvc::PathToCmdString(include_dir));
     }
 
-    for (auto& define : task.defines) {
+    for (auto& define : task.inputs->defines) {
         cmd += std::format(" /D{}", define);
     }
 
@@ -98,11 +98,11 @@ bool ClangClBackend::CompileTask(const Task& task) const
     // cmds.emplace_back("/Zc:preprocessor /permissive-");
     // cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 /std:c++latest -MD");
 
-    for (auto& include_dir : task.include_dirs) {
+    for (auto& include_dir : task.inputs->include_dirs) {
         cmds.emplace_back(std::format("/I{}", msvc::PathToCmdString(include_dir)));
     }
 
-    for (auto& define : task.defines) {
+    for (auto& define : task.inputs->defines) {
         cmds.emplace_back(std::format("/D{}", define));
     }
 
@@ -175,11 +175,11 @@ void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
         // cmds.emplace_back("/Zc:preprocessor /permissive-");
         // cmds.emplace_back("/DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 /std:c++latest -MD");
 
-        for (auto& include_dir : task.include_dirs) {
+        for (auto& include_dir : task.inputs->include_dirs) {
             cmds.emplace_back(std::format("/I{}", msvc::PathToCmdString(include_dir)));
         }
 
-        for (auto& define : task.defines) {
+        for (auto& define : task.inputs->defines) {
             cmds.emplace_back(std::format("/D{}", define));
         }
 
