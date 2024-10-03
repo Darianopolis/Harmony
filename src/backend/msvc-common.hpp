@@ -21,6 +21,6 @@ namespace msvc
 
     void AddSystemIncludeDirs(BuildState& state);
 
-    void ForEachLink(const Target& target, FunctionRef<void(const fs::path&)>);
-    void ForEachShared(const Target& target, FunctionRef<void(const fs::path&)>);
+    void ForEachLink(const Target& target, function_ref<void(const fs::path&)>);
+    void ForEachShared(const Target& target, function_ref<void(const fs::path&)>);
 }

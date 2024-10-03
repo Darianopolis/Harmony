@@ -3,7 +3,7 @@
 
 #include "msvc-common.hpp"
 
-static const fs::path VisualStudioEnvPath = BuildDir / "env";
+static const fs::path VisualStudioEnvPath = HarmonyDir / "driver/msvc/env";
 static constexpr const char* VCToolsInstallDirEnvName = "VCToolsInstallDir";
 
 namespace win32
@@ -86,7 +86,7 @@ namespace msvc
 
     void SafeCompleteCmd(std::string& cmd, const std::vector<std::string>& cmds)
     {
-        auto build_dir = BuildDir;
+        auto cmd_dir = HarmonyTempDir;
 
         size_t cmd_length = cmd.size();
         for (auto& cmd_part : cmds) {
@@ -98,7 +98,6 @@ namespace msvc
         if (cmd_length > CmdSizeLimit) {
             static std::atomic_uint32_t cmd_file_id = 0;
 
-            auto cmd_dir = build_dir / "cmds";
             fs::create_directories(cmd_dir);
             auto cmd_path = cmd_dir / std::format("cmd.{}", cmd_file_id++);
             std::ofstream out(cmd_path, std::ios::binary);
@@ -153,14 +152,11 @@ namespace msvc
 {
     bool LinkStep(Target& target, std::span<const Task> tasks)
     {
-        auto build_dir = BuildDir;
-
         auto& executable = target.executable.value();
 
         auto output_file = (executable.path).replace_extension(".exe");
         fs::create_directories(output_file.parent_path());
 
-        // auto cmd = std::format("cd /d {} && link /nologo /subsystem:console /OUT:{}", msvc::PathToCmdString(build_dir), msvc::PathToCmdString(output_file));
         auto cmd = std::format("cd /d {} && link /nologo", msvc::PathToCmdString(output_file.parent_path()));
         std::vector<std::string> cmds;
         switch (executable.type) {
@@ -213,7 +209,7 @@ namespace msvc
         }
     }
 
-    void ForEachLink(const Target& target, FunctionRef<void(const fs::path&)> callback)
+    void ForEachLink(const Target& target, function_ref<void(const fs::path&)> callback)
     {
         // TODO: Move this to shared logic!
         // TODO: Backend should only care about identifying .lib extensions
@@ -243,7 +239,7 @@ namespace msvc
         }
     }
 
-    void ForEachShared(const Target& target, FunctionRef<void(const fs::path&)> callback)
+    void ForEachShared(const Target& target, function_ref<void(const fs::path&)> callback)
     {
         // TODO: Move this to shared logic!
         // TODO: Backend should only care about identifying .dll extensions

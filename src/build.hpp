@@ -124,6 +124,7 @@ struct Target {
     std::optional<Git> git;
     std::optional<Download> download;
     std::optional<CMake> cmake;
+    fs::path dir;
 
     // TODO: This is internal build state, move
     std::unordered_set<Target*> flattened_imports;
@@ -159,6 +160,8 @@ struct Task {
 
     TaskState state = TaskState::Waiting;
 
+    uint32_t max_depth = 0;
+
     bool external = false;
 };
 
@@ -175,6 +178,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update);
 void ExpandTargets(BuildState& state);
 void ScanDependencies(BuildState& state, bool use_backend_dependency_scan);
 void DetectAndInsertStdModules(BuildState& state);
+void SortDependencies(BuildState& state);
 void Flatten(BuildState& state);
 void Build(BuildState&, bool multithreaded);
 
@@ -200,4 +204,4 @@ struct ScanResult
     std::string unique_name;
 };
 
-ScanResult ScanFile(const fs::path& path, std::string& storage, FunctionRef<void(Component&)>);
+ScanResult ScanFile(const fs::path& path, std::string& storage, function_ref<void(Component&)>);

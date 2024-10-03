@@ -100,7 +100,11 @@ namespace harmony::detail
 
 // -----------------------------------------------------------------------------
 
-inline const fs::path BuildDir = ".harmony";
+// TODO: This should use Platform specific environment helper
+inline const fs::path HarmonyDir = fs::path(std::getenv("USERPROFILE")) / ".harmony";
+inline const fs::path HarmonyDataDir = HarmonyDir / "data";
+inline const fs::path HarmonyTempDir = HarmonyDir / "tmp";
+inline const fs::path HarmonyObjectDir = HarmonyDir / "out";
 
 // -----------------------------------------------------------------------------
 
@@ -218,9 +222,9 @@ template<typename Ret, typename... Types>
 struct GetFunctionImpl<Ret(Types...)> { using type = FuncBase<Ret, Types...>; };
 
 template<typename Sig>
-struct FunctionRef : GetFunctionImpl<Sig>::type {
+struct function_ref : GetFunctionImpl<Sig>::type {
     template<typename Fn>
-    FunctionRef(Fn&& fn)
+    function_ref(Fn&& fn)
         : GetFunctionImpl<Sig>::type(&fn,
             []<typename... Args>(void*b, Args&&... args) -> auto {
                 return std::forward<Fn>(*static_cast<Fn*>(b))(std::forward<Args>(args)...);

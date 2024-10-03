@@ -67,6 +67,9 @@ target_sources(test
         FILE_SET CXX_MODULES TYPE CXX_MODULES FILES
         test/other.ixx
         test/third.ixx)
+target_include_directories(test
+        PUBLIC
+        test)
 set_target_properties(test PROPERTIES LINKER_LANGUAGE CXX)
 add_custom_command(TARGET test POST_BUILD COMMAND
         ${CMAKE_COMMAND} -E copy $<TARGET_FILE:test> ${CMAKE_SOURCE_DIR}/out/test.exe)

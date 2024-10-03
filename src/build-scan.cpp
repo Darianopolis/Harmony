@@ -31,7 +31,7 @@ bool wsnl(char c)
     return ws(c) || nl(c);
 }
 
-ScanResult ScanFile(const fs::path& path, std::string& data, FunctionRef<void(Component&)> callback)
+ScanResult ScanFile(const fs::path& path, std::string& data, function_ref<void(Component&)> callback)
 {
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in.is_open()) {
@@ -531,4 +531,93 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan)
             task.unique_name = std::format("{}.{:x}", path.filename().string(), hash);
         }
     }
+
+    LogDebug("Trimming normal header tasks");
+
+    std::erase_if(state.tasks, [](const auto& task) {
+        if (!task.is_header_unit && task.source.type == SourceType::CppHeader) {
+            LogTrace("Header [{}] is not consumed as a header unit", task.unique_name);
+            return true;
+        }
+        return false;
+    });
+}
+void SortDependencies(BuildState& state)
+{
+    // TODO: Don't duplicate this, inefficient anyway!
+    auto FindTaskForProduced = [&](std::string_view name) -> Task* {
+        for (auto& task : state.tasks) {
+            for (auto& produced : task.produces) {
+                if (produced == name) return &task;
+            }
+        }
+        return nullptr;
+    };
+
+    LogDebug("Calculating dependency depths");
+
+    auto FindMaxDepth = [&](this auto&& self, Task& task, uint32_t depth) -> void {
+        if (depth <= task.max_depth) {
+            // already visited at or deeper
+            return;
+        }
+        task.max_depth = std::max(depth, task.max_depth);
+
+        for (auto& dep : task.depends_on) {
+            auto source = FindTaskForProduced(dep.name);
+            if (!source) {
+                Error(std::format("No task provides [{}] required by [{}]", dep.name, task.unique_name));
+            }
+
+            self(*source, depth + 1);
+        }
+    };
+
+    {
+        // uint32_t max_depth  = 0;
+        for (auto& task : state.tasks) {
+            // max_depth = std::max(max_depth, FindMaxDepth(task));
+            FindMaxDepth(task, 1);
+        }
+    }
+
+    // uint32_t i = 0;
+    // auto ReadMaxDepthChain = [&](this auto&& self, Task& task) -> void {
+    //     LogTrace("[{}] = {}", i++, task.source.path.string());
+    //
+    //     uint32_t max_depth = 0;
+    //     Task* max_task = nullptr;
+    //
+    //     for (auto& dep : task.depends_on) {
+    //         if (*dep.source->max_depth >= max_depth) {
+    //             max_depth = *dep.source->max_depth;
+    //             max_task = dep.source;
+    //         }
+    //     }
+    //
+    //     if (max_depth > 0) {
+    //         self(*max_task);
+    //     }
+    // };
+    //
+    // {
+    //     uint32_t max_depth = 0;
+    //     Task* max_task = nullptr;
+    //
+    //     for (auto& task : state.tasks) {
+    //         if (*task.max_depth >= max_depth) {
+    //             max_depth = *task.max_depth;
+    //             max_task = &task;
+    //         }
+    //     }
+    //
+    //     if (max_task) {
+    //         LogDebug("Maximum task depth = {}", max_depth);
+    //         ReadMaxDepthChain(*max_task);
+    //     }
+    // }
+
+    LogDebug("Sorting tasks");
+
+    std::ranges::sort(state.tasks, [](auto& l, auto& r) { return l.max_depth > r.max_depth; });
 }

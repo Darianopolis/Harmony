@@ -30,7 +30,7 @@ ClangClBackend::~ClangClBackend() = default;
 
 void ClangClBackend::FindDependencies(const Task& task, std::string& dependency_info_p1689_json) const
 {
-    auto output_location = BuildDir / std::format("{}.p1689.json", task.unique_name);
+    auto output_location = HarmonyTempDir / std::format("{}.p1689.json", task.unique_name);
 
     auto cmd = std::format("{} -format=p1689 -o {} -- {} /std:c++latest /nologo -x c++-module {} ",
         ClangScanDepsPath, msvc::PathToCmdString(output_location), ClangClPath, msvc::PathToCmdString(task.source.path));
@@ -60,7 +60,7 @@ void ClangClBackend::GenerateStdModuleTasks(Task* std_task, Task* std_compat_tas
 
 void ClangClBackend::AddTaskInfo(std::span<Task> tasks) const
 {
-    auto build_dir = BuildDir;
+    auto build_dir = HarmonyObjectDir;
 
     for (auto& task : tasks) {
         auto obj = fs::path(std::format("{}.obj", task.unique_name));
@@ -73,7 +73,7 @@ void ClangClBackend::AddTaskInfo(std::span<Task> tasks) const
 
 bool ClangClBackend::CompileTask(const Task& task) const
 {
-    auto build_dir = BuildDir;
+    auto build_dir = HarmonyObjectDir;
 
     auto cmd = std::format("cd /d {} && {}", msvc::PathToCmdString(build_dir), ClangClPath);
 
@@ -143,7 +143,7 @@ bool ClangClBackend::CompileTask(const Task& task) const
 
 void ClangClBackend::GenerateCompileCommands(std::span<const Task> tasks) const
 {
-    auto build_dir = BuildDir;
+    auto build_dir = HarmonyObjectDir;
 
     auto doc = yyjson_mut_doc_new(nullptr);
 

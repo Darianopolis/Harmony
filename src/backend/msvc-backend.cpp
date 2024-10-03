@@ -23,7 +23,7 @@ MsvcBackend::~MsvcBackend() = default;
 
 void MsvcBackend::FindDependencies(const Task& task, std::string& dependency_info_p1689_json) const
 {
-    auto output_location = BuildDir / std::format("{}.p1689.json", task.unique_name);
+    auto output_location = HarmonyTempDir / std::format("{}.p1689.json", task.unique_name);
 
     auto cmd = std::format("cl.exe /std:c++latest /nologo /scanDependencies {} /TP {} ", msvc::PathToCmdString(output_location), msvc::PathToCmdString(task.source.path));
 
@@ -52,22 +52,25 @@ void MsvcBackend::GenerateStdModuleTasks(Task* std_task, Task* std_compat_task) 
 
 void MsvcBackend::AddTaskInfo(std::span<Task> tasks) const
 {
-    auto build_dir = BuildDir;
+    auto build_dir = HarmonyObjectDir;
 
     for (auto& task : tasks) {
         auto obj = fs::path(std::format("{}.obj", task.unique_name));
         auto bmi = fs::path(std::format("{}.ifc", task.unique_name));
 
-        task.obj = build_dir / obj;
-        task.bmi = build_dir / bmi;
+        auto target_build_dir = build_dir / task.target->name;
+
+        task.obj = target_build_dir / obj;
+        task.bmi = target_build_dir / bmi;
     }
 }
 
 bool MsvcBackend::CompileTask(const Task& task) const
 {
-    auto build_dir = BuildDir;
+    auto target_build_dir = HarmonyObjectDir / task.target->name;
+    fs::create_directories(target_build_dir);
 
-    auto cmd = std::format("cd /d {} && cl", msvc::PathToCmdString(build_dir));
+    auto cmd = std::format("cd /d {} && cl", msvc::PathToCmdString(target_build_dir));
 
     std::vector<std::string> cmds;
 

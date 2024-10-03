@@ -37,6 +37,10 @@ int main(int argc, char* argv[]) try
  -msvc               :: Use the msvc backend
 
  -toolchain-dep-scan :: Use the toolchain (msvc, clang) provided dependency scan to verify dependencies
+
+ -st                 :: Run build single threaded only for debugging
+
+ -workspace <path>   :: Generate CMake workspace at given location
 )");
         throw HarmonySilentException{};
     };
@@ -51,6 +55,7 @@ int main(int argc, char* argv[]) try
     bool fetch_dependencies = false;
     bool clean_dependencies = false;
     bool multithreaded = true;
+    std::optional<fs::path> workspace;
     for (int i = 2; i < argc; ++i) {
         // Check for updates
         if ("-fetch"sv == argv[i]) fetch_dependencies = true;
@@ -74,6 +79,10 @@ int main(int argc, char* argv[]) try
         // TODO: Allow user to select how many threads to use
         //       Should be set in profile?
         else if ("-st"sv == argv[i]) multithreaded = false;
+        else if ("-workspace") {
+            if (++i >= argc) Error("Expected path after -worksapce");
+            workspace = fs::path(argv[i]);
+        }
         // Unknown switch
         else {
             LogError("Unknown switch: {}", argv[i]);
@@ -83,7 +92,10 @@ int main(int argc, char* argv[]) try
 
     auto config = ReadFileToString(argv[1]);
 
-    fs::create_directories(BuildDir);
+    fs::create_directories(HarmonyDir);
+    fs::create_directories(HarmonyDataDir);
+    fs::create_directories(HarmonyTempDir);
+    fs::create_directories(HarmonyObjectDir);
     BuildState state;
     std::unique_ptr<Backend> backend;
     if (use_clang) {
@@ -105,20 +117,12 @@ int main(int argc, char* argv[]) try
     ExpandTargets(state);
     ScanDependencies(state, use_backend_dependency_scan);
     DetectAndInsertStdModules(state);
+    SortDependencies(state);
     Flatten(state);
-    GenerateCMake(state, ".");
+    if (workspace) {
+        GenerateCMake(state, *workspace);
+    }
     Build(state, multithreaded);
-
-    // HARMONY_IGNORE(argc, argv)
-    //
-    // log_level = LogLevel::Trace;
-    // wait_on_close = true;
-    //
-    // fs::path path = "D:/Dev/Projects/harmony/src/generators/cmake-generator.cpp";
-    // std::string data;
-    //
-    // LogDebug("Scanning file: [{}]", path.string());
-    // ScanFile(path, data, [](Component&){});
 }
 catch (const std::exception& e)
 {

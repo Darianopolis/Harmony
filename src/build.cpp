@@ -26,8 +26,11 @@ void DetectAndInsertStdModules(BuildState& state)
     // TODO: Create std as a fully fledged target without a bunch of special case logic
     auto& std_target = state.targets.at("std");
     std_target.name = "std";
+
+    auto& source_set = std_target.sources.emplace_back();
+    source_set.inputs.type = SourceType::CppSource;
+
     // TODO: Cleanup
-    auto* inputs = new TranslationInputs();
     {
         std::optional<Task> std_task, std_compat_task;
         for (auto& task : state.tasks) {
@@ -38,7 +41,7 @@ void DetectAndInsertStdModules(BuildState& state)
                         std_task = Task {
                             .target = &std_target,
                             .source{.type = SourceType::CppInterface},
-                            .inputs = inputs,
+                            .inputs = &source_set.inputs,
                             .unique_name = "std",
                             .produces = { "std" },
                             .external = true,
@@ -54,7 +57,7 @@ void DetectAndInsertStdModules(BuildState& state)
                         std_compat_task = Task {
                             .target = &std_target,
                             .source{.type = SourceType::CppInterface},
-                            .inputs = inputs,
+                            .inputs = &source_set.inputs,
                             .unique_name = "std.compat",
                             .produces = { "std.compat" },
                             .depends_on = { {"std"} },
@@ -70,8 +73,22 @@ void DetectAndInsertStdModules(BuildState& state)
         state.backend->GenerateStdModuleTasks(
             std_task ? &*std_task : nullptr,
             std_compat_task ? &*std_compat_task : nullptr);
-        if (std_task) state.tasks.emplace_back(std::move(*std_task));
-        if (std_compat_task) state.tasks.emplace_back(std::move(*std_compat_task));
+
+        if (std_task || std_compat_task) {
+            std_target.dir = std_task->source.path.parent_path();
+
+            source_set.sources.emplace_back(std_task->source);
+            state.tasks.emplace_back(std::move(*std_task));
+
+            if (std_compat_task) {
+                if (std_target.dir != std_compat_task->source.path.parent_path()) {
+                    Error("std and std compat modules must be in the same folder!");
+                }
+
+                source_set.sources.emplace_back(std_compat_task->source);
+                state.tasks.emplace_back(std::move(*std_compat_task));
+            }
+        }
     }
 }
 
@@ -108,16 +125,6 @@ void Build(BuildState& state, bool multithreaded)
 {
     LogInfo("Building");
 
-    LogDebug("Trimming normal header tasks");
-
-    std::erase_if(state.tasks, [](const auto& task) {
-        if (!task.is_header_unit && task.source.type == SourceType::CppHeader) {
-            LogTrace("Header [{}] is not consumed as a header unit", task.unique_name);
-            return true;
-        }
-        return false;
-    });
-
     LogDebug("Resolving dependencies");
 
     {
@@ -135,74 +142,8 @@ void Build(BuildState& state, bool multithreaded)
         for (auto& task : state.tasks) {
             for (auto& depends_on : task.depends_on) {
                 auto* depends_on_task = FindTaskForProduced(depends_on.name);
-                if (!depends_on_task) {
-                    Error(std::format("No task provides [{}] required by [{}]", depends_on.name, task.unique_name));
-                }
+                // All dependencies guaranteed to be satisfied from build scan dependencies phase
                 depends_on.source = depends_on_task;
-            }
-        }
-    }
-
-    bool compute_dependency_stats = true;
-    if (compute_dependency_stats) {
-        LogDebug("Calculating dependency stats");
-
-        std::unordered_map<const void*, uint32_t> cache;
-        auto FindMaxDepth = [&](this auto&& self, const Task& task) {
-            if (cache.contains(&task)) {
-                return cache.at(&task);
-            }
-
-            uint32_t max_depth = 0;
-
-            for (auto& dep : task.depends_on) {
-                max_depth = std::max(max_depth, self(*dep.source));
-            }
-
-            cache[&task] = max_depth + 1;
-            return max_depth + 1;
-        };
-
-        {
-            uint32_t max_depth  = 0;
-            for (auto& task : state.tasks) {
-                max_depth = std::max(max_depth, FindMaxDepth(task));
-            }
-        }
-
-        uint32_t i = 0;
-        auto ReadMaxDepthChain = [&](this auto&& self, const Task& task) -> void {
-            LogTrace("[{}] = {}", i++, task.source.path.string());
-
-            uint32_t max_depth = 0;
-            const Task* max_task = nullptr;
-
-            for (auto& dep : task.depends_on) {
-                if (cache.at(dep.source) >= max_depth) {
-                    max_depth = cache.at(dep.source);
-                    max_task = dep.source;
-                }
-            }
-
-            if (max_depth > 0) {
-                self(*max_task);
-            }
-        };
-
-        {
-            uint32_t max_depth = 0;
-            const Task* max_task = nullptr;
-
-            for (auto& task : state.tasks) {
-                if (cache.at(&task) >= max_depth) {
-                    max_depth = cache.at(&task);
-                    max_task = &task;
-                }
-            }
-
-            if (max_task) {
-                LogDebug("Maximum task depth = {}", max_depth);
-                ReadMaxDepthChain(*max_task);
             }
         }
     }

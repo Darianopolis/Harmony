@@ -23,7 +23,8 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
 {
     LogInfo("Parsing targets file");
 
-    auto deps_folder = fs::path(".deps");
+    auto deps_folder = HarmonyDataDir;
+    fs::create_directories(deps_folder);
     JsonDocument doc(config);
 
     for (auto in_target :  doc.root()["targets"]) {
@@ -39,6 +40,7 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
 
         auto& out_target = state.targets[name];
         out_target.name = name;
+        out_target.dir = dir;
 
         for (auto include : in_target["include"]) {
             out_target.exported_translation_inputs.include_dirs.emplace_back(dir / include.string());
@@ -249,10 +251,10 @@ void ExpandTargets(BuildState& state)
 
                 auto detected_type = SourceType::Unknown;
 
-                if      (ext == ".c") detected_type = SourceType::CSource;
-                else if (ext == ".cpp") detected_type = SourceType::CppSource;
-                else if (ext == ".hpp") detected_type = SourceType::CppHeader;
-                else if (ext == ".ixx") detected_type = SourceType::CppInterface;
+                if      (ext == ".c")    detected_type = SourceType::CSource;
+                else if (ext == ".cpp")  detected_type = SourceType::CppSource;
+                else if (ext == ".hpp")  detected_type = SourceType::CppHeader;
+                else if (ext == ".ixx")  detected_type = SourceType::CppInterface;
                 else if (ext == ".cppm") detected_type = SourceType::CppInterface;
 
                 auto effective_type = type == SourceType::Unknown ? detected_type : type;
@@ -301,9 +303,6 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
         LogInfo("Checking for missing dependencies");
     }
 
-    auto deps_folder = fs::path(".deps");
-    fs::create_directories(deps_folder);
-
     constexpr uint32_t stage_fetch = 0;
     constexpr uint32_t stage_unpack = 1;
     constexpr uint32_t stage_git_prepare = 2;
@@ -323,7 +322,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
         std::vector<std::jthread> tasks;
 
         for (auto[name, target] : state.targets) {
-            auto dir = deps_folder / name;
+            auto dir = target.dir;
 
             auto task = [=, &cmake_do_build] {
                 if (auto& git = target.git) {
@@ -337,7 +336,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                             if (git->branch) {
                                 cmd += std::format(" --branch={}", *git->branch);
                             }
-                            cmd += std::format(" .deps/{}", name);
+                            cmd += std::format(" {}", FormatPath(dir));
 
                             LogCmd(cmd);
 
@@ -378,7 +377,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
 
                             if (download->type == ArchiveType::Zip) {
                                 std::string cmd;
-                                cmd += std::format(" cd .deps && 7z x -y {0}.tmp -o{0}", name);
+                                cmd += std::format(" 7z x -y {} -o{}", FormatPath(tmp_file), FormatPath(dir));
 
                                 LogCmd(cmd);
                                 std::system(cmd.c_str());
@@ -399,7 +398,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                             LogInfo("Configuring CMake build in [{}]", dir.string());
 
                             std::string cmd;
-                            cmd += std::format(" cd .deps/{}", name);
+                            cmd += std::format(" cd {}", FormatPath(dir));
                             cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={} -DCMAKE_BUILD_TYPE={} -B {}", FormatPath(CMakeInstallDir), profile, FormatPath(CMakeBuildDir));
 
                             for (auto option : cmake->options) {
@@ -417,7 +416,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                             LogInfo("Running CMake build in [{}]", dir.string());
 
                             std::string cmd;
-                            cmd += std::format(" cd .deps/{}", name);
+                            cmd += std::format(" cd {}", FormatPath(dir));
                             cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", FormatPath(CMakeBuildDir), profile);
 
                             LogCmd(cmd);
