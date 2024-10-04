@@ -17,7 +17,7 @@ const static fs::path CMakeBuildDir = ".harmony-cmake-build";
 const static fs::path CMakeInstallDir = CMakeBuildDir / "install";
 const static fs::path CMakeInstallBinDir = CMakeInstallDir / "bin";
 const static fs::path CMakeInstallIncludeDir = CMakeInstallDir / "include";
-const static fs::path CMakeInstallLinkDir = CMakeInstallDir / "link";
+const static fs::path CMakeInstallLinkDir = CMakeInstallDir / "lib";
 
 void ParseTargetsFile(BuildState& state, std::string_view config)
 {
@@ -125,10 +125,13 @@ void ParseTargetsFile(BuildState& state, std::string_view config)
 
         if (auto executable = in_target["executable"]) {
             out_target.executable.emplace(
-                executable["name"].string(),
+                [&] {
+                    auto exe_name = executable["name"].string();
+                    return exe_name ? exe_name : out_target.name;
+                }(),
                 [&] {
                     auto type_str = executable["type"].string();
-                    if (!type_str) Error("Executable must specify type [console] or [window]");
+                    if (!type_str) return ExecutableType::Console;
                     if ("console"sv == type_str) return ExecutableType::Console;
                     if ("window"sv == type_str) return ExecutableType::Window;
                     Error(std::format("Unknown executable type: [{}] (expected [console] or [window])", type_str));
@@ -345,7 +348,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                             LogDebug("Checking for git updates in [{}]", dir.string());
 
                             std::string cmd;
-                            cmd += std::format("cd {}", dir.string());
+                            cmd += std::format("cd /D {}", dir.string());
                             if (git->branch) {
                                 cmd += std::format(" && git checkout {}", *git->branch);
                             }
@@ -398,8 +401,8 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                             LogInfo("Configuring CMake build in [{}]", dir.string());
 
                             std::string cmd;
-                            cmd += std::format(" cd {}", FormatPath(dir));
-                            cmd += std::format(" && cmake . -DCMAKE_INSTALL_PREFIX={} -DCMAKE_BUILD_TYPE={} -B {}", FormatPath(CMakeInstallDir), profile, FormatPath(CMakeBuildDir));
+                            cmd += std::format(" cd /D {}", FormatPath(dir));
+                            cmd += std::format(" && cmake -DCMAKE_INSTALL_PREFIX={} -DCMAKE_BUILD_TYPE={} -B {} -G Ninja", FormatPath(CMakeInstallDir), profile, FormatPath(CMakeBuildDir));
 
                             for (auto option : cmake->options) {
                                 cmd += std::format(" -D{}", option);
@@ -416,7 +419,7 @@ void FetchExternalData(BuildState& state, bool clean, bool update)
                             LogInfo("Running CMake build in [{}]", dir.string());
 
                             std::string cmd;
-                            cmd += std::format(" cd {}", FormatPath(dir));
+                            cmd += std::format(" cd /D {}", FormatPath(dir));
                             cmd += std::format(" && cmake --build {} --config {} --target install --parallel 32", FormatPath(CMakeBuildDir), profile);
 
                             LogCmd(cmd);

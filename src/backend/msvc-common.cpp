@@ -154,7 +154,8 @@ namespace msvc
     {
         auto& executable = target.executable.value();
 
-        auto output_file = (executable.path).replace_extension(".exe");
+        auto output_file = HarmonyObjectDir / target.name / std::format("{}.exe", executable.name);
+        executable.built_path = output_file;
         fs::create_directories(output_file.parent_path());
 
         auto cmd = std::format("cd /d {} && link /nologo", msvc::PathToCmdString(output_file.parent_path()));

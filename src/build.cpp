@@ -121,7 +121,7 @@ void Flatten(BuildState& state)
     }
 }
 
-void Build(BuildState& state, bool multithreaded)
+bool Build(BuildState& state, bool multithreaded)
 {
     LogInfo("Building");
 
@@ -358,42 +358,65 @@ void Build(BuildState& state, bool multithreaded)
 
     }
 
-    if (stats.compiled == stats.to_compile) {
+    if (stats.compiled != stats.to_compile) return false;
 
-        LogInfo("Creating target executables");
+    LogInfo("Creating target executables");
 
-        for (auto&[_, target] : state.targets) {
-            if (!target.executable) continue;
+    int link_errors = 0;
 
-            LogInfo("Linking [{}] from [{}]", target.executable->path.string(), target.name);
-            auto res = state.backend->LinkStep(target, state.tasks);
-            if (!res) {
-                LogError("Error linking [{}] from [{}]", target.executable->path.string(), target.name);
-                continue;
-            }
+    for (auto&[_, target] : state.targets) {
+        if (!target.executable) continue;
 
-            // Copy shared artifacts
-
-            bool logged_copy = false;
-
-            auto out_dir = target.executable->path.parent_path();
-            msvc::ForEachShared(target, [&](const fs::path& shared) {
-                auto to = out_dir / shared.filename();
-                bool to_exists = fs::exists(to);
-                bool do_copy = !to_exists || (fs::last_write_time(to) < fs::last_write_time(shared));
-                if (!do_copy) return;
-                if (!logged_copy) {
-                    logged_copy = true;
-                    LogInfo("Copying shared artifacts...");
-                }
-                if (to_exists) {
-                    LogTrace("Updating shared artifact: {}", shared.string());
-                    fs::remove(to);
-                } else {
-                    LogTrace("Copying shared artifact: {}", shared.string());
-                }
-                fs::copy(shared, to);
-            });
+        LogInfo("Linking [{}] from [{}]", target.executable->name, target.name);
+        auto res = state.backend->LinkStep(target, state.tasks);
+        if (!res) {
+            LogError("Error linking [{}] from [{}]", target.executable->name, target.name);
+            link_errors++;
+            continue;
         }
+
+        // Copy shared artifacts
+
+        bool logged_copy = false;
+
+        auto out_dir = HarmonyObjectDir / target.name;
+        msvc::ForEachShared(target, [&](const fs::path& shared) {
+            auto to = out_dir / shared.filename();
+            bool to_exists = fs::exists(to);
+            bool do_copy = !to_exists || (fs::last_write_time(to) < fs::last_write_time(shared));
+            if (!do_copy) return;
+            if (!logged_copy) {
+                logged_copy = true;
+                LogInfo("Copying shared artifacts...");
+            }
+            if (to_exists) {
+                LogTrace("Updating shared artifact: {}", shared.string());
+                fs::remove(to);
+            } else {
+                LogTrace("Copying shared artifact: {}", shared.string());
+            }
+            fs::copy(shared, to);
+        });
     }
+
+    return link_errors == 0;
+}
+
+void Run(BuildState& state, std::string_view to_run)
+{
+    LogInfo("Running target [{}]", to_run);
+
+    auto iter = state.targets.find(std::string(to_run));
+    if (iter == state.targets.end()) {
+        Error("Target [{}] not found", to_run);
+    }
+    auto& target = iter->second;
+    if (!target.executable || !target.executable->built_path) {
+        Error("Target [{}] does not contain built executable", to_run);
+    }
+
+    std::string cmd;
+    cmd += FormatPath(*target.executable->built_path, PathFormatOptions::Backward | PathFormatOptions::QuoteSpaces | PathFormatOptions::Absolute);
+    LogCmd(cmd);
+    std::system(cmd.c_str());
 }

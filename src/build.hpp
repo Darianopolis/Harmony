@@ -46,8 +46,10 @@ enum class ExecutableType
 };
 
 struct Executable {
-    fs::path path;
-    ExecutableType type;
+    std::string name;
+    ExecutableType type = ExecutableType::Console;
+
+    std::optional<fs::path> built_path;
 };
 
 struct Git
@@ -180,7 +182,8 @@ void ScanDependencies(BuildState& state, bool use_backend_dependency_scan);
 void DetectAndInsertStdModules(BuildState& state);
 void SortDependencies(BuildState& state);
 void Flatten(BuildState& state);
-void Build(BuildState&, bool multithreaded);
+bool Build(BuildState&, bool multithreaded);
+void Run(BuildState&, std::string_view to_run);
 
 struct Component
 {

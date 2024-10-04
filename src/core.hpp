@@ -128,7 +128,7 @@ void Error(std::string_view message)
 }
 
 template<class... Args>
-void Error(const std::format_string<Args...> fmt, Args&&... args)
+[[noreturn]] void Error(const std::format_string<Args...> fmt, Args&&... args)
 {
     Error(std::vformat(fmt.get(), std::make_format_args(args...)));
 }

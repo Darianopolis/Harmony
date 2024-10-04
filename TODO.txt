@@ -1,12 +1,11 @@
 Functionality
+- Add "run tests" and "run with debugger" commands
+- Refactor to server model, accepting build commands and persisting build state in memory
+
 - Clean up backend usage
   - Statically register backends by string name, don't include in cli.cpp
   - Separate compiler and linker backends
   - Rename backend -> driver?
-
-- Refactor output folder structures
-  - Separate out dependencies, temp files, objects/bmis in subfolders
-  - Move harmony state to centralized location?
 
 - Remove "tasks" from early build steps
   - Create intermediate Source representation (post expansion, pre task distribution)
@@ -30,7 +29,6 @@ Functionality
 - Improve CMake config support
   - add include and link properties that automatically track to generated cmake build folder
 
-- Implement proper job system that limits the number of running jobs
 - Clean up process execution
   - Use platform process creation instead of std::system
     - can avoid 8000 character limit for compile commands?

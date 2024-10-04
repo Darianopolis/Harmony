@@ -41,6 +41,8 @@ int main(int argc, char* argv[]) try
  -st                 :: Run build single threaded only for debugging
 
  -workspace <path>   :: Generate CMake workspace at given location
+
+ -run <target>       :: Run the associated target after building
 )");
         throw HarmonySilentException{};
     };
@@ -56,6 +58,7 @@ int main(int argc, char* argv[]) try
     bool clean_dependencies = false;
     bool multithreaded = true;
     std::optional<fs::path> workspace;
+    std::optional<std::string> to_run;
     for (int i = 2; i < argc; ++i) {
         // Check for updates
         if ("-fetch"sv == argv[i]) fetch_dependencies = true;
@@ -79,9 +82,16 @@ int main(int argc, char* argv[]) try
         // TODO: Allow user to select how many threads to use
         //       Should be set in profile?
         else if ("-st"sv == argv[i]) multithreaded = false;
-        else if ("-workspace") {
+        // Specify a workspace to create
+        else if ("-workspace"sv == argv[i]) {
             if (++i >= argc) Error("Expected path after -worksapce");
             workspace = fs::path(argv[i]);
+        }
+        // Specify a target executable to run
+        else if ("-run"sv == argv[i]) {
+            if (++i >= argc) Error("Expected target name after -workspace");
+            if (to_run) Error("Can only run one target");
+            to_run = argv[i];
         }
         // Unknown switch
         else {
@@ -122,7 +132,13 @@ int main(int argc, char* argv[]) try
     if (workspace) {
         GenerateCMake(state, *workspace);
     }
-    Build(state, multithreaded);
+    if (!Build(state, multithreaded)) {
+        Error("Build failed, exiting");
+    }
+    LogInfo("Build success");
+    if (to_run) {
+        Run(state, *to_run);
+    }
 }
 catch (const std::exception& e)
 {
