@@ -1,0 +1,14 @@
+# Development
+.cache/
+.vscode/
+.local/
+
+# Artifacts
+.build/
+test/
+
+# Runtime
+*.log
+*.png
+imgui.ini
+.harmony
