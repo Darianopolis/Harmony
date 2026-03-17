@@ -1,4 +1,5 @@
 #include "git-cache.hpp"
+#include "harmony.hpp"
 #include "sha256.hpp"
 
 #include <git2.h>
@@ -15,7 +16,7 @@
 #define GIT_CACHE_VERBOSE 1
 
 #if GIT_CACHE_VERBOSE
-#define VERBOSE_LOG(fmt, ...) std::println("[VERBOSE] " fmt __VA_OPT__(,) __VA_ARGS__)
+#define VERBOSE_LOG(fmt, ...) log("[VERBOSE] " fmt __VA_OPT__(,) __VA_ARGS__)
 #else
 #define VERBOSE_LOG(...)
 #endif
@@ -94,7 +95,7 @@ auto get_metadata_repo(const Directories& dirs, const std::string& url) -> Repos
         return Repository(repo);
     }
 
-    std::println("[metadata] Cloning metadata repo for {}", url);
+    log("[metadata] Cloning metadata repo for {}", url);
 
     git_clone_options opts = GIT_CLONE_OPTIONS_INIT;
     opts.checkout_opts.checkout_strategy = GIT_CHECKOUT_NONE;
@@ -149,6 +150,13 @@ auto fetch_remote(git_repository* repo, const char* refspec) -> void
         std::format("fetch ref {}", refspec));
 }
 
+auto object_lookup(git_repository* repo, const git_oid* oid)
+{
+    git_object* obj = nullptr;
+    git_object_lookup(&obj, repo, oid, GIT_OBJECT_ANY);
+    return Object(obj);
+}
+
 auto revparse_single(git_repository* repo, const char* ref) -> Object
 {
     git_object* obj = nullptr;
@@ -170,7 +178,7 @@ auto resolve_ref(git_repository* repo, const char* refspec, bool fetch) -> Objec
         // ref is probably an OID
         git_oid oid = {};
         if (git_oid_fromstr(&oid, maybe_hex_oid) == 0) {
-            if (auto obj = revparse_single(repo, refspec)) {
+            if (auto obj = object_lookup(repo, &oid)) {
                 VERBOSE_LOG("  found OID directly");
                 return obj;
             }
@@ -183,7 +191,7 @@ auto resolve_ref(git_repository* repo, const char* refspec, bool fetch) -> Objec
 
     bool fetched = false;
     if (fetch && is_remote_branch(repo, refspec)) {
-        std::println("[checkout] Fetching updated branch content for \"{}\"", refspec);
+        log("[checkout] Fetching updated branch content for \"{}\"", refspec);
         fetch_remote(repo, refspec);
         fetched = true;
     }
@@ -195,7 +203,7 @@ auto resolve_ref(git_repository* repo, const char* refspec, bool fetch) -> Objec
     }
 
     if (!fetched) {
-        std::println("[metadata] refspec \"{}\" not found locally, attempting direct fetch", refspec);
+        log("[metadata] refspec \"{}\" not found locally, attempting direct fetch", refspec);
         fetch_remote(repo, refspec);
 
         VERBOSE_LOG("  second revparse attempt");
@@ -217,21 +225,71 @@ auto make_checkout_path(const Directories& dirs, std::string_view url, std::stri
     return dirs.checkout / harmony::sha256_hex(std::format("{}@{}", url, oid_str));
 }
 
+// ---------------------------------------------------------------------------
+
+struct SubmodulePayload {
+    const Directories& dirs;
+    git_repository* repo;
+    const std::string& url;
+};
+
+auto process_submodules(
+    const Directories& dirs,
+    git_repository* repo,
+    const std::string& url
+) -> void
+{
+    auto callback = [](git_submodule* sm, const char* /*name*/, void* raw) -> int {
+        auto& p = *static_cast<SubmodulePayload*>(raw);
+
+        const git_oid* pinned_oid = git_submodule_head_id(sm);
+        if (!pinned_oid) { return 0; }
+
+        git_buf resolved_url = GIT_BUF_INIT;
+        defer { git_buf_dispose(&resolved_url); };
+        check_git(
+            git_submodule_resolve_url(&resolved_url, p.repo, git_submodule_url(sm)),
+            "resolve submodule URL");
+
+        auto submodule_ref = oid_to_string(pinned_oid);
+        auto[submodule_path, _] = harmony::git_cache::checkout(
+            p.dirs.checkout.parent_path(),
+            resolved_url.ptr,
+            submodule_ref);
+
+        make_symlink(
+            fs::path(git_repository_workdir(p.repo)) / git_submodule_path(sm),
+            submodule_path,
+            /*force=*/true);
+
+        return 0;
+    };
+
+    SubmodulePayload payload{dirs, repo, url};
+    check_git(git_submodule_foreach(repo, callback, &payload), "iterate submodules");
+}
+
+// ---------------------------------------------------------------------------
+
 auto do_checkout(
     const Directories& dirs,
     git_repository* metadata_repo,
     const std::string& url,
-    git_object* object
-) -> fs::path
+    git_object* metadata_object
+) -> harmony::git_cache::CheckoutResult
 {
-    auto oid = git_object_id(object);
+    auto oid = git_object_id(metadata_object);
     auto object_oid_str = oid_to_string(oid);
+
+    VERBOSE_LOG("do_checkout({}, {})", url, object_oid_str);
 
     fs::path checkout_dir = make_checkout_path(dirs, url, object_oid_str);
 
-    if (fs::exists(checkout_dir)) { return checkout_dir; }
+    if (fs::exists(checkout_dir)) {
+        return {checkout_dir, object_oid_str};
+    }
 
-    std::println("[checkout] Checking out {}", object_oid_str);
+    log("[checkout] Checking out {}", object_oid_str);
 
     // Clone from local metadata repo with no working tree yet
     git_clone_options clone_opts = GIT_CLONE_OPTIONS_INIT;
@@ -245,11 +303,20 @@ auto do_checkout(
         "clone checkout repo");
     Repository repo(raw_repo);
 
+    // Get checked out repo object
+    auto object = object_lookup(raw_repo, oid);
+    VERBOSE_LOG("  object = {}", (void*)object.get());
+
+    // Fix origin URL so git_submodule_resolve_url resolves relative URLs correctly
+    check_git(
+        git_remote_set_url(repo.get(), "origin", url.c_str()),
+        "set origin URL");
+
     // Populate the working tree
     git_checkout_options co_opts = GIT_CHECKOUT_OPTIONS_INIT;
     co_opts.checkout_strategy = GIT_CHECKOUT_FORCE;
     check_git(
-        git_checkout_tree(repo.get(), object, &co_opts),
+        git_checkout_tree(repo.get(), object.get(), &co_opts),
         "checkout tree");
 
     // Point HEAD at the commit (detached)
@@ -257,7 +324,9 @@ auto do_checkout(
         git_repository_set_head_detached(repo.get(), oid),
         "set HEAD detached");
 
-    return checkout_dir;
+    process_submodules(dirs, repo.get(), url);
+
+    return {checkout_dir, object_oid_str};
 }
 
 } // anonymous namespace
@@ -270,7 +339,7 @@ auto checkout(
     const std::string& url,
     const std::string& ref,
     bool fetch
-) -> fs::path
+) -> CheckoutResult
 {
     // Init libgit2
     git_libgit2_init();
@@ -285,7 +354,7 @@ auto checkout(
 
     // Check if ref is already a full commit hash and checkout exists
     auto checkout = make_checkout_path(dirs, url, ref);
-    if (fs::exists(checkout)) { return checkout; }
+    if (fs::exists(checkout)) { return {checkout, ref}; }
 
     // Else lookup refspec in metadata repo
     auto metadata = get_metadata_repo(dirs, url);

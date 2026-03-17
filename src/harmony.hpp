@@ -6,7 +6,13 @@
 namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------------
-// Symlink helpers
+
+template<typename... Args>
+void log(std::format_string<Args...> fmt, Args&&... args)
+{
+    std::println(stderr, fmt, std::forward<Args>(args)...);
+}
+
 // ---------------------------------------------------------------------------
 
 inline
@@ -18,7 +24,7 @@ auto make_symlink(const fs::path& path, const fs::path& target, bool force = fal
         try {
             same_file = fs::equivalent(path, target);
         } catch (...) {
-            std::println("[link] Error following existing path, attempt to replace...");
+            log("[link] Error following existing path, attempt to replace...");
         }
 
         if (same_file) { return; }
@@ -37,7 +43,7 @@ auto make_symlink(const fs::path& path, const fs::path& target, bool force = fal
         }
     }
 
-    std::println("[link] {} -> {}", path.string(), target.string());
+    log("[link] {} -> {}", path.string(), target.string());
     fs::create_directories(path.parent_path());
     fs::create_symlink(fs::weakly_canonical(target), path);
 }

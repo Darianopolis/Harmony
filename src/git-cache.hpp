@@ -5,6 +5,12 @@
 
 namespace harmony::git_cache {
 
+struct CheckoutResult
+{
+    std::filesystem::path repo;
+    std::string oid;
+};
+
 // Ensures url@ref is present in the local cache.
 // Returns the path to the content-addressed checkout directory.
 //
@@ -19,6 +25,6 @@ auto checkout(
     const std::string& url,
     const std::string& ref,
     bool fetch = false
-) -> std::filesystem::path;
+) -> CheckoutResult;
 
 } // namespace harmony::git_cache
